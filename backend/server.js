@@ -681,26 +681,39 @@ app.get('/api/cron/check-overdue-tasks', async (req, res) => {
 })
 
 // ============================================================
-// 静态托管前端 build 产物(生产环境单服务部署,同源免 CORS)
-// 部署时把 frontend/dist 复制到 backend/dist 即可
+// 部署模式判断:
+// - VERCEL 环境:只 export app,让 Vercel 处理
+// - 本地环境:listen + 托管前端静态文件
 // ============================================================
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const FRONTEND_DIST = process.env.FRONTEND_DIST || path.resolve(__dirname, '../frontend/dist')
-try {
-  if (fs.existsSync(FRONTEND_DIST) && fs.statSync(FRONTEND_DIST).isDirectory()) {
-    app.use(express.static(FRONTEND_DIST))
-    // SPA 回退:非 /api 路径都回 index.html,避免刷新 404
-    app.get(/^(?!\/api).*/, (req, res) => {
-      res.sendFile(path.join(FRONTEND_DIST, 'index.html'))
-    })
-    console.log(`[dingtalk-task] 托管前端: ${FRONTEND_DIST}`)
-  } else {
-    console.warn(`[dingtalk-task] 未找到前端 dist(${FRONTEND_DIST}),仅运行 API`)
+const IS_VERCEL = !!process.env.VERCEL
+
+if (IS_VERCEL) {
+  // Vercel 上静态托管交给 vercel.json + build 输出
+  // 这里只 export app
+} else {
+  // 静态托管前端 build 产物(生产环境单服务部署,同源免 CORS)
+  // 部署时把 frontend/dist 复制到 backend/dist 即可
+  const __dirname = path.dirname(fileURLToPath(import.meta.url))
+  const FRONTEND_DIST = process.env.FRONTEND_DIST || path.resolve(__dirname, '../frontend/dist')
+  try {
+    if (fs.existsSync(FRONTEND_DIST) && fs.statSync(FRONTEND_DIST).isDirectory()) {
+      app.use(express.static(FRONTEND_DIST))
+      // SPA 回退:非 /api 路径都回 index.html,避免刷新 404
+      app.get(/^(?!\/api).*/, (req, res) => {
+        res.sendFile(path.join(FRONTEND_DIST, 'index.html'))
+      })
+      console.log(`[dingtalk-task] 托管前端: ${FRONTEND_DIST}`)
+    } else {
+      console.warn(`[dingtalk-task] 未找到前端 dist(${FRONTEND_DIST}),仅运行 API`)
+    }
+  } catch (e) {
+    console.warn(`[dingtalk-task] 静态托管初始化失败,仅运行 API:`, e.message)
   }
-} catch (e) {
-  console.warn(`[dingtalk-task] 静态托管初始化失败,仅运行 API:`, e.message)
+
+  app.listen(PORT, () => {
+    console.log(`[dingtalk-task] backend on http://localhost:${PORT}`)
+  })
 }
 
-app.listen(PORT, () => {
-  console.log(`[dingtalk-task] backend on http://localhost:${PORT}`)
-})
+// 暴露给 Vercel Serverless Function 用
+export { app }
