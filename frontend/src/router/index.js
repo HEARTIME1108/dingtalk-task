@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { supabase } from '../api/supabase'
+import { isLoggedIn } from '../api/supabase'
 
 const routes = [
   { path: '/', redirect: '/tasks' },
@@ -31,11 +31,11 @@ const router = createRouter({
   routes
 })
 
-router.beforeEach(async (to, from, next) => {
-  const { data } = await supabase.auth.getSession()
-  if (to.meta.requiresAuth && !data.session) {
+router.beforeEach((to, from, next) => {
+  const logged = isLoggedIn()
+  if (to.meta.requiresAuth && !logged) {
     next({ name: 'login' })
-  } else if (to.name === 'login' && data.session) {
+  } else if (to.name === 'login' && logged) {
     next({ name: 'taskList' })
   } else {
     next()

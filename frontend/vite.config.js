@@ -8,6 +8,10 @@ export default defineConfig({
     vue(),
     Components({ resolvers: [VantResolver()] })
   ],
+  build: {
+    outDir: '../',
+    emptyOutDir: false
+  },
   server: {
     host: '0.0.0.0',
     port: 5173,

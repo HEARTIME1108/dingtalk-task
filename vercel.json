@@ -1,15 +1,19 @@
 {
-  "version": 2,
-  "buildCommand": "npm --prefix frontend install && npm --prefix backend install && npm --prefix frontend run build",
-  "outputDirectory": "frontend/dist",
-  "functions": {
-    "api/index.js": {
-      "maxDuration": 30
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "app": {
+      "root": ".",
+      "buildCommand": "npm install && npm run build",
+      "outputDirectory": "frontend/dist",
+      "functions": {
+        "api/index.js": {
+          "maxDuration": 30
+        }
+      },
+      "rewrites": [
+        { "source": "/api/(.*)", "destination": "/api/index" },
+        { "source": "/((?!api/).*)", "destination": "/$1" }
+      ]
     }
-  },
-  "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/index" },
-    { "source": "/((?!api/).*)", "destination": "/$1" }
-  ],
-  "framework": null
+  }
 }

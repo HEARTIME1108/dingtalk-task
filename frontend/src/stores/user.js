@@ -1,5 +1,6 @@
 import { reactive } from 'vue'
-import { supabase, getCurrentUser, signOut } from '../api/supabase'
+import { getCurrentUser, isLoggedIn, signOut } from '../api/supabase'
+import { fetchMe } from '../api/task'
 
 export const userStore = reactive({
   user: null,
@@ -10,15 +11,19 @@ export const userStore = reactive({
 export async function loadUser() {
   userStore.loading = true
   try {
+    // 先从 localStorage 拿 JWT user(含 id/email)
     const u = await getCurrentUser()
     userStore.user = u
     if (u) {
-      const { data } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', u.id)
-        .single()
-      userStore.profile = data
+      // 通过后端 /api/me 拿 profile(含 name/is_admin),绕 RLS
+      try {
+        const me = await fetchMe()
+        userStore.profile = me
+        // 同步 user.id 以防 JWT 解码出来的 id 和 DB 不一致
+        if (me?.id) userStore.user = { ...userStore.user, id: me.id }
+      } catch (e) {
+        userStore.profile = null
+      }
     } else {
       userStore.profile = null
     }

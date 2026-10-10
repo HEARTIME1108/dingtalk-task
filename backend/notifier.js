@@ -1,14 +1,14 @@
 // 钉钉工作消息通知工具(用 fetch 直接调 REST API,绕过 supabase-js)
-const {
-  DINGTALK_APP_KEY,
-  DINGTALK_APP_SECRET,
-  SUPABASE_URL,
-  SUPABASE_SERVICE_ROLE_KEY,
-  APP_AGENT_ID,
-  FRONTEND_BASE_URL = 'http://localhost:5173'
-} = process.env
+// 不在模块顶层读 env,所有 env 在函数内读(适配 Cloudflare Workers)
+
+function env(key, def = '') {
+  if (typeof process !== 'undefined' && process.env && process.env[key]) return process.env[key]
+  return def
+}
 
 async function adminFetch(path, options = {}) {
+  const SUPABASE_URL = env('SUPABASE_URL')
+  const SUPABASE_SERVICE_ROLE_KEY = env('SUPABASE_SERVICE_ROLE_KEY')
   const url = `${SUPABASE_URL}/rest/v1/${path}`
   const headers = {
     'apikey': SUPABASE_SERVICE_ROLE_KEY,
@@ -38,15 +38,20 @@ export async function getDingtalkAccessToken() {
   if (tokenCache.token && now < tokenCache.expire - 60000) {
     return tokenCache.token
   }
-  const url = `https://oapi.dingtalk.com/gettoken?appkey=${DINGTALK_APP_KEY}&appsecret=${DINGTALK_APP_SECRET}`
-  const res = await fetch(url)
+  const DINGTALK_APP_KEY = env('DINGTALK_APP_KEY')
+  const DINGTALK_APP_SECRET = env('DINGTALK_APP_SECRET')
+  const res = await fetch('https://api.dingtalk.com/v1.0/oauth2/accessToken', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ appKey: DINGTALK_APP_KEY, appSecret: DINGTALK_APP_SECRET })
+  })
   const data = await res.json()
-  if (data.errcode !== 0) {
-    throw new Error('gettoken 失败: ' + JSON.stringify(data))
+  if (!data.accessToken) {
+    throw new Error('获取钉钉 access_token 失败: ' + JSON.stringify(data))
   }
   tokenCache = {
-    token: data.access_token,
-    expire: now + (data.expires_in || 7200) * 1000
+    token: data.accessToken,
+    expire: now + (data.expireIn || 7200) * 1000
   }
   return tokenCache.token
 }
@@ -65,6 +70,7 @@ async function getDingtalkUserIds(userIds) {
 // 发送 actionCard 工作消息
 // ============================================================
 async function sendActionCard({ userIds, title, markdown, taskUrl }) {
+  const APP_AGENT_ID = env('APP_AGENT_ID')
   if (!APP_AGENT_ID) {
     console.warn('[notifier] 未配置 APP_AGENT_ID,跳过发送')
     return { skipped: true, reason: 'no_agent_id' }
@@ -160,6 +166,7 @@ export async function notifyTask({ taskId, type, recipientIds, fromName = '系�
   // 4) 渲染消息
   const tpl = TEMPLATES[type]
   if (!tpl) throw new Error('未知通知类型: ' + type)
+  const FRONTEND_BASE_URL = env('FRONTEND_BASE_URL', 'http://localhost:5173')
   const taskUrl = `${FRONTEND_BASE_URL}/tasks/${task.id}`
   const markdown = tpl.body(task, fromName) + `\n\n[查看任务](${taskUrl})`
   const title = tpl.title(task)

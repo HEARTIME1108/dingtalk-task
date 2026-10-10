@@ -682,12 +682,12 @@ app.get('/api/cron/check-overdue-tasks', async (req, res) => {
 
 // ============================================================
 // 部署模式判断:
-// - VERCEL 环境:只 export app,让 Vercel 处理
+// - VERCEL/Cloudflare 环境:只 export app,让平台处理
 // - 本地环境:listen + 托管前端静态文件
 // ============================================================
-const IS_VERCEL = !!process.env.VERCEL
+const IS_SERVERLESS = !!process.env.VERCEL || !!process.env.CF_PAGES
 
-if (IS_VERCEL) {
+if (IS_SERVERLESS) {
   // Vercel 上静态托管交给 vercel.json + build 输出
   // 这里只 export app
 } else {

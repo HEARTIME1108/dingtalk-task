@@ -1,36 +1,38 @@
-import { getCurrentUser } from './supabase'
+import { getCurrentUser, getAccessToken } from './supabase'
 
 // ============================================================
 // 状态机:每个状态可流转到的下一批状态
 // ============================================================
 export const STATUS_FLOW = {
-  draft: ['pending_review'],
-  pending_review: ['approved', 'rejected'],
-  approved: ['in_progress'],
-  rejected: ['draft'],
-  in_progress: ['done', 'cancelled'],
-  done: [],
-  cancelled: []
+  todo: ['in_progress'],
+  in_progress: ['pending_review'],
+  pending_review: ['done', 'rejected'],
+  rejected: ['in_progress'],
+  done: ['closed'],
+  closed: []
 }
 
 export const STATUS_LABEL = {
-  draft: '草稿',
-  pending_review: '待审批',
-  approved: '已通过',
-  rejected: '已驳回',
+  todo: '待办',
   in_progress: '进行中',
+  pending_review: '待审核',
   done: '已完成',
-  cancelled: '已取消'
+  rejected: '已驳回',
+  closed: '已关闭'
 }
 
 export const STATUS_COLOR = {
-  draft: '#969799',
-  pending_review: '#1989fa',
-  approved: '#07c160',
-  rejected: '#ee0a24',
+  todo: '#1989fa',
   in_progress: '#ff976a',
+  pending_review: '#1989fa',
   done: '#07c160',
-  cancelled: '#969799'
+  rejected: '#ee0a24',
+  closed: '#969799'
+}
+
+export const TASK_TYPE_LABEL = {
+  team: '班组任务',
+  department: '部门任务'
 }
 
 export const PRIORITY_LABEL = { low: '低', medium: '中', high: '高', urgent: '紧急' }
@@ -54,12 +56,37 @@ async function apiCall(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) }
   const token = getToken()
   if (token) headers['Authorization'] = `Bearer ${token}`
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.message || `请求失败 ${res.status}`)
+
+  // 加超时,防止请求挂起
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 15000)
+
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers,
+      signal: controller.signal
+    })
+    clearTimeout(timeoutId)
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      let msg = `请求失败 ${res.status}`
+      try {
+        const err = JSON.parse(text)
+        msg = err.message || msg
+      } catch (_) {}
+      throw new Error(msg)
+    }
+    const text = await res.text()
+    return text ? JSON.parse(text) : null
+  } catch (e) {
+    clearTimeout(timeoutId)
+    if (e.name === 'AbortError') {
+      throw new Error('请求超时(15秒),请检查网络')
+    }
+    throw e
   }
-  return res.json()
 }
 
 // ============================================================
@@ -77,8 +104,22 @@ export async function fetchTask(id) {
   return apiCall(`/tasks/${id}`)
 }
 
+export async function fetchTaskCounts() {
+  const token = await getAccessToken()
+  const res = await fetch(`${API_BASE}/tasks/counts`, {
+    headers: { Authorization: `Bearer ${token}` }
+  })
+  if (!res.ok) throw new Error((await res.json()).message || '获取计数失败')
+  return res.json()
+}
+
 export async function fetchUsers() {
   return apiCall('/users')
+}
+
+// 当前登录用户信息(含 is_admin)
+export async function fetchMe() {
+  return apiCall('/me')
 }
 
 // ============================================================
