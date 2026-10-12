@@ -1,1 +1,0 @@
-import{X as l,Y as r,U as i}from"./index-Bt3G8ct3.js";const e=i({user:null,profile:null,loading:!1});async function t(){e.loading=!0;try{const s=await l();if(e.user=s,s){const{data:a}=await r.from("users").select("*").eq("id",s.id).single();e.profile=a}else e.profile=null}finally{e.loading=!1}}export{t as l,e as u};
