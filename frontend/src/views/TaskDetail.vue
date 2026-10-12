@@ -43,6 +43,18 @@
       <van-cell title="创建时间" :value="formatTime(task.created_at)" />
     </van-cell-group>
 
+    <van-cell-group inset title="标签" v-if="task.tags?.length || canEdit">
+      <van-cell>
+        <template #value>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;">
+            <van-tag v-for="t in task.tags" :key="t.tag_id || t.id" :color="t.color || t.tag?.color" plain size="medium" style="margin-bottom:4px;">
+              {{ t.tag?.name || t.name }}
+            </van-tag>
+          </div>
+        </template>
+      </van-cell>
+    </van-cell-group>
+
     <van-cell-group inset title="描述" v-if="task.description">
       <van-cell>
         <template #value><div class="desc">{{ task.description }}</div></template>
@@ -57,6 +69,30 @@
       </van-cell>
     </van-cell-group>
 
+    <van-cell-group inset title="子任务" v-if="task.subtasks?.length">
+      <van-cell
+        v-for="st in task.subtasks" :key="st.id"
+        :title="st.title" is-link
+        @click="$router.push(`/tasks/${st.id}`)"
+      >
+        <template #value>
+          <van-tag :color="STATUS_COLOR[st.status]" size="medium">{{ STATUS_LABEL[st.status] }}</van-tag>
+        </template>
+      </van-cell>
+    </van-cell-group>
+
+    <van-cell-group inset title="附件" v-if="attachments.length || canEdit">
+      <van-cell v-for="a in attachments" :key="a.id" :title="a.file_name" :label="formatFileSize(a.file_size)">
+        <template #value>
+          <van-button v-if="canEdit" size="mini" type="danger" plain @click="onDeleteAttachment(a.id)">删除</van-button>
+        </template>
+      </van-cell>
+      <van-cell v-if="!attachments.length && canEdit" title="暂无附件" />
+      <div v-if="canEdit" style="padding:12px;">
+        <van-button size="small" type="primary" plain @click="showAttachmentInput = true">添加附件链接</van-button>
+      </div>
+    </van-cell-group>
+
     <van-cell-group inset title="流转记录" v-if="task.flows?.length">
       <van-steps direction="vertical" :active="task.flows.length - 1">
         <van-step v-for="f in task.flows" :key="f.id">
@@ -67,12 +103,35 @@
       </van-steps>
     </van-cell-group>
 
+    <van-cell-group inset title="评论">
+      <div v-if="comments.length" style="padding:0 16px;">
+        <div v-for="cm in comments" :key="cm.id" class="comment-item">
+          <div class="comment-header">
+            <span class="comment-author">{{ cm.user?.name || '未知' }}</span>
+            <span class="comment-time">{{ formatTime(cm.created_at) }}</span>
+            <van-button v-if="cm.user_id === userStore.user?.id || isAdmin" size="mini" type="danger" plain @click="onDeleteComment(cm.id)">删</van-button>
+          </div>
+          <div class="comment-content">{{ cm.content }}</div>
+        </div>
+      </div>
+      <van-cell v-if="!comments.length" title="暂无评论" />
+      <div style="display:flex;gap:8px;padding:12px 16px;">
+        <input v-model="commentInput" class="custom-input" placeholder="写评论..." style="flex:1;" />
+        <van-button size="small" type="primary" @click="onAddComment">发送</van-button>
+      </div>
+    </van-cell-group>
+
     <div class="action-bar" v-if="nextActions.length || canDelete">
       <van-button
         v-for="na in nextActions" :key="na.to"
         :type="na.type" block plain
         @click="onTransition(na.to)"
       >{{ na.label }}</van-button>
+      <van-button
+        v-if="canEdit"
+        type="warning" plain block
+        @click="$router.push(`/tasks/${route.params.id}/edit`)"
+      >编辑任务</van-button>
       <van-button
         v-if="canDelete"
         type="danger" plain block
@@ -109,6 +168,21 @@
         </div>
       </div>
     </div>
+
+    <!-- 附件输入弹窗 -->
+    <div v-if="showAttachmentInput" class="custom-overlay" @click="showAttachmentInput = false">
+      <div class="custom-modal" @click.stop>
+        <div class="custom-modal-title">添加附件</div>
+        <div style="padding:12px 20px;">
+          <input v-model="attachmentName" class="custom-input" placeholder="文件名（可选）" style="margin-bottom:8px;" />
+          <input v-model="attachmentUrl" class="custom-input" placeholder="文件链接URL" />
+        </div>
+        <div class="custom-modal-actions">
+          <button class="custom-modal-btn cancel" @click="showAttachmentInput = false">取消</button>
+          <button class="custom-modal-btn confirm" @click="onAddAttachment">确认</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -118,6 +192,8 @@ import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import {
   fetchTask, transitionTask, deleteTask,
+  fetchAttachments, addAttachment, deleteAttachment,
+  fetchComments, addComment, deleteComment,
   STATUS_LABEL, STATUS_COLOR, PRIORITY_LABEL, PRIORITY_COLOR, TASK_TYPE_LABEL
 } from '../api/task'
 import { userStore, loadUser } from '../stores/user'
@@ -142,6 +218,79 @@ const isReviewer = computed(() => task.value?.reviewer_id === userStore.user?.id
 const isDepartmentHead = computed(() => task.value?.department_head_id === userStore.user?.id)
 const isAdmin = computed(() => !!task.value?._isAdmin)
 const canDelete = computed(() => isAdmin.value || isCreator.value || isAssignee.value || isReviewer.value)
+const canEdit = computed(() => isAdmin.value || isCreator.value)
+
+const attachments = ref([])
+const showAttachmentInput = ref(false)
+const attachmentUrl = ref('')
+const attachmentName = ref('')
+
+const comments = ref([])
+const commentInput = ref('')
+
+async function loadAttachments() {
+  try {
+    attachments.value = await fetchAttachments(route.params.id)
+  } catch (e) {}
+}
+
+async function onAddAttachment() {
+  try {
+    await addAttachment(route.params.id, {
+      file_name: attachmentName.value || attachmentUrl.value,
+      file_url: attachmentUrl.value,
+      file_type: 'link'
+    })
+    showAttachmentInput.value = false
+    attachmentUrl.value = ''
+    attachmentName.value = ''
+    await loadAttachments()
+  } catch (e) {
+    errorMsg.value = '添加附件失败：' + (e.message || '')
+  }
+}
+
+async function onDeleteAttachment(aid) {
+  try {
+    await deleteAttachment(route.params.id, aid)
+    await loadAttachments()
+  } catch (e) {
+    errorMsg.value = '删除附件失败：' + (e.message || '')
+  }
+}
+
+function formatFileSize(bytes) {
+  if (!bytes) return ''
+  if (bytes < 1024) return bytes + 'B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + 'KB'
+  return (bytes / 1024 / 1024).toFixed(1) + 'MB'
+}
+
+async function loadComments() {
+  try {
+    comments.value = await fetchComments(route.params.id)
+  } catch (e) {}
+}
+
+async function onAddComment() {
+  if (!commentInput.value.trim()) return
+  try {
+    await addComment(route.params.id, commentInput.value)
+    commentInput.value = ''
+    await loadComments()
+  } catch (e) {
+    errorMsg.value = '评论失败：' + (e.message || '')
+  }
+}
+
+async function onDeleteComment(cid) {
+  try {
+    await deleteComment(route.params.id, cid)
+    await loadComments()
+  } catch (e) {
+    errorMsg.value = '删除评论失败：' + (e.message || '')
+  }
+}
 
 const nextActions = computed(() => {
   if (!task.value) return []
@@ -196,6 +345,8 @@ async function load() {
     if (!userStore.profile) {
       await loadUser()
     }
+    await loadAttachments()
+    await loadComments()
   } catch (e) {
     errorMsg.value = '加载失败：' + (e.message || '未知错误')
   }
@@ -336,4 +487,11 @@ onMounted(load)
 .custom-input:focus {
   border-color: #1989fa;
 }
+
+.comment-item { padding:12px 0;border-bottom:1px solid #ebedf0; }
+.comment-item:last-child { border-bottom:none; }
+.comment-header { display:flex;align-items:center;gap:8px;margin-bottom:4px; }
+.comment-author { font-weight:600;font-size:14px;color:#323233; }
+.comment-time { font-size:12px;color:#969799; }
+.comment-content { font-size:14px;color:#323233;line-height:1.5; }
 </style>

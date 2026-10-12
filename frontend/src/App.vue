@@ -1,5 +1,11 @@
 <template>
-  <router-view />
+  <div id="app-root">
+    <!-- 版本号调试标识(右上角小字,方便确认是否加载了最新代码) -->
+    <div style="position:fixed;top:2px;right:4px;font-size:9px;color:#c8c9cc;z-index:99999;pointer-events:none;">
+      v{{ __BUILD_TIME__ }}
+    </div>
+    <router-view />
+  </div>
 </template>
 
 <script setup>
@@ -7,10 +13,26 @@ import { onMounted } from 'vue'
 import { isLoggedIn } from './api/supabase'
 import { loadUser } from './stores/user'
 
+// 版本检测:发现新版本自动刷新(解决钉钉 WebView 缓存问题)
+async function checkVersion() {
+  try {
+    const res = await fetch(`/version.json?t=${Date.now()}`, { cache: 'no-store' })
+    if (!res.ok) return
+    const data = await res.json()
+    if (data.version && String(data.version) !== String(__BUILD_TIME__)) {
+      // 版本不一致,强制刷新清缓存
+      location.reload(true)
+    }
+  } catch (e) {
+    // 忽略检测失败
+  }
+}
+
 onMounted(async () => {
   if (isLoggedIn()) {
     await loadUser()
   }
+  checkVersion()
 })
 </script>
 

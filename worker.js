@@ -594,8 +594,8 @@ app.get('/api/tasks/:id', requireUser, async (c) => {
   try {
     const userId = c.get('userId')
     const id = c.req.param('id')
-    const selectWithDH = `*,creator:users!tasks_creator_id_fkey(id,name,avatar_url),assignee:users!tasks_assignee_id_fkey(id,name,avatar_url),reviewer:users!tasks_reviewer_id_fkey(id,name,avatar_url),department_head:users!tasks_department_head_id_fkey(id,name,avatar_url),assignees:task_assignees(user_id,role,user:users(id,name,avatar_url)),flows:task_flows(id,from_status,to_status,comment,created_at,operator:users(name,avatar_url))`
-    const selectWithoutDH = `*,creator:users!tasks_creator_id_fkey(id,name,avatar_url),assignee:users!tasks_assignee_id_fkey(id,name,avatar_url),reviewer:users!tasks_reviewer_id_fkey(id,name,avatar_url),assignees:task_assignees(user_id,role,user:users(id,name,avatar_url)),flows:task_flows(id,from_status,to_status,comment,created_at,operator:users(name,avatar_url))`
+    const selectWithDH = `*,creator:users!tasks_creator_id_fkey(id,name,avatar_url),assignee:users!tasks_assignee_id_fkey(id,name,avatar_url),reviewer:users!tasks_reviewer_id_fkey(id,name,avatar_url),department_head:users!tasks_department_head_id_fkey(id,name,avatar_url),assignees:task_assignees(user_id,role,user:users(id,name,avatar_url)),flows:task_flows(id,from_status,to_status,comment,created_at,operator:users(name,avatar_url)),subtasks:tasks!tasks_parent_id_fkey(id,title,status,priority,assignee:users!tasks_assignee_id_fkey(id,name))`
+    const selectWithoutDH = `*,creator:users!tasks_creator_id_fkey(id,name,avatar_url),assignee:users!tasks_assignee_id_fkey(id,name,avatar_url),reviewer:users!tasks_reviewer_id_fkey(id,name,avatar_url),assignees:task_assignees(user_id,role,user:users(id,name,avatar_url)),flows:task_flows(id,from_status,to_status,comment,created_at,operator:users(name,avatar_url)),subtasks:tasks!tasks_parent_id_fkey(id,title,status,priority,assignee:users!tasks_assignee_id_fkey(id,name))`
     let data
     try {
       data = await adminFetch(c, `tasks?id=eq.${id}&select=${selectWithDH}`)
@@ -634,7 +634,7 @@ app.post('/api/tasks', requireUser, async (c) => {
   try {
     const userId = c.get('userId')
     const body = await c.req.json()
-    const { title, description, priority, assignee_id, reviewer_id, due_date, assignee_ids, task_type, department_head_id } = body
+    const { title, description, priority, assignee_id, reviewer_id, due_date, assignee_ids, task_type, department_head_id, parent_id } = body
     if (!title) return c.json({ message: '标题必填' }, 400)
 
     const basePayload = {
@@ -642,7 +642,8 @@ app.post('/api/tasks', requireUser, async (c) => {
       priority: priority || 'medium',
       status: 'todo',
       creator_id: userId,
-      assignee_id, reviewer_id, due_date
+      assignee_id, reviewer_id, due_date,
+      parent_id: parent_id || null
     }
 
     let task
@@ -701,16 +702,45 @@ app.put('/api/tasks/:id', requireUser, async (c) => {
     const userId = c.get('userId')
     const id = c.req.param('id')
     const body = await c.req.json()
-    const { title, description, priority, assignee_id, reviewer_id, due_date } = body
+    const { title, description, priority, assignee_id, reviewer_id, due_date, task_type, department_head_id, assignee_ids } = body
 
     const exist = await adminFetch(c, `tasks?id=eq.${id}&select=creator_id`)
     if (!exist || !exist.length) return c.json({ message: '任务不存在' }, 404)
-    if (exist[0].creator_id !== userId) return c.json({ message: '只有创建者能修改' }, 403)
+
+    // 管理员或创建人可编辑
+    let isAdmin = false
+    try {
+      const adminCheck = await adminFetch(c, `users?id=eq.${userId}&select=is_admin`)
+      isAdmin = adminCheck && adminCheck.length && adminCheck[0].is_admin === true
+    } catch (e) {}
+    if (exist[0].creator_id !== userId && !isAdmin) return c.json({ message: '只有创建人或管理员能修改' }, 403)
+
+    const updatePayload = { title, description, priority, assignee_id, reviewer_id, due_date }
+    if (task_type) updatePayload.task_type = task_type
+    if (department_head_id !== undefined) updatePayload.department_head_id = department_head_id || null
 
     const updated = await adminFetch(c, `tasks?id=eq.${id}`, {
       method: 'PATCH',
-      body: JSON.stringify({ title, description, priority, assignee_id, reviewer_id, due_date })
+      body: JSON.stringify(updatePayload)
     })
+
+    // 更新协作者
+    if (assignee_ids !== undefined) {
+      await adminFetch(c, `task_assignees?task_id=eq.${id}`, { method: 'DELETE' })
+      if (assignee_ids.length) {
+        await adminFetch(c, 'task_assignees', {
+          method: 'POST',
+          body: JSON.stringify(assignee_ids.map(uid => ({ task_id: id, user_id: uid, role: 'assignee' })))
+        })
+      }
+    }
+
+    // 记录日志
+    await adminFetch(c, 'task_logs', {
+      method: 'POST',
+      body: JSON.stringify({ task_id: id, operator_id: userId, action: 'update', detail: { fields: Object.keys(updatePayload) } })
+    })
+
     return c.json(Array.isArray(updated) ? updated[0] : updated)
   } catch (e) {
     console.error('[update task]', e)
@@ -860,6 +890,229 @@ app.post('/api/users/sync', requireUser, async (c) => {
   try {
     const results = await syncOrgMembers(c)
     return c.json(results)
+  } catch (e) {
+    return c.json({ message: e.message }, 500)
+  }
+})
+
+// ============================================================
+// 任务附件
+// ============================================================
+app.get('/api/tasks/:id/attachments', requireUser, async (c) => {
+  try {
+    const id = c.req.param('id')
+    const data = await adminFetch(c, `task_attachments?task_id=eq.${id}&select=id,task_id,uploader_id,file_name,file_url,file_size,file_type,created_at&order=created_at.desc`)
+    return c.json(data || [])
+  } catch (e) {
+    return c.json({ message: e.message }, 500)
+  }
+})
+
+app.post('/api/tasks/:id/attachments', requireUser, async (c) => {
+  try {
+    const userId = c.get('userId')
+    const id = c.req.param('id')
+    const body = await c.req.json()
+    const { file_name, file_url, file_size, file_type } = body
+    if (!file_name || !file_url) return c.json({ message: '文件名和URL必填' }, 400)
+
+    const data = await adminFetch(c, 'task_attachments', {
+      method: 'POST',
+      body: JSON.stringify({ task_id: id, uploader_id: userId, file_name, file_url, file_size: file_size || 0, file_type: file_type || '' })
+    })
+    return c.json(Array.isArray(data) ? data[0] : data)
+  } catch (e) {
+    return c.json({ message: e.message }, 500)
+  }
+})
+
+app.delete('/api/tasks/:id/attachments/:aid', requireUser, async (c) => {
+  try {
+    const id = c.req.param('id')
+    const aid = c.req.param('aid')
+    await adminFetch(c, `task_attachments?id=eq.${aid}&task_id=eq.${id}`, { method: 'DELETE' })
+    return c.json({ ok: true })
+  } catch (e) {
+    return c.json({ message: e.message }, 500)
+  }
+})
+
+// ============================================================
+// 任务评论
+// ============================================================
+app.get('/api/tasks/:id/comments', requireUser, async (c) => {
+  try {
+    const id = c.req.param('id')
+    const data = await adminFetch(c, `task_comments?task_id=eq.${id}&select=id,task_id,user_id,content,created_at,user:users!task_comments_user_id_fkey(id,name,avatar_url)&order=created_at.asc`)
+    return c.json(data || [])
+  } catch (e) {
+    return c.json({ message: e.message }, 500)
+  }
+})
+
+app.post('/api/tasks/:id/comments', requireUser, async (c) => {
+  try {
+    const userId = c.get('userId')
+    const id = c.req.param('id')
+    const body = await c.req.json()
+    const { content } = body
+    if (!content) return c.json({ message: '评论内容必填' }, 400)
+
+    const data = await adminFetch(c, 'task_comments', {
+      method: 'POST',
+      body: JSON.stringify({ task_id: id, user_id: userId, content })
+    })
+    // 补充返回用户信息
+    const result = Array.isArray(data) ? data[0] : data
+    if (result) {
+      const user = await adminFetch(c, `users?id=eq.${userId}&select=id,name,avatar_url`)
+      result.user = user && user[0]
+    }
+    return c.json(result)
+  } catch (e) {
+    return c.json({ message: e.message }, 500)
+  }
+})
+
+app.delete('/api/tasks/:id/comments/:cid', requireUser, async (c) => {
+  try {
+    const userId = c.get('userId')
+    const id = c.req.param('id')
+    const cid = c.req.param('cid')
+    // 查评论是否属于当前用户
+    const exist = await adminFetch(c, `task_comments?id=eq.${cid}&select=user_id`)
+    if (!exist || !exist.length) return c.json({ message: '评论不存在' }, 404)
+    let isAdmin = false
+    try {
+      const adminCheck = await adminFetch(c, `users?id=eq.${userId}&select=is_admin`)
+      isAdmin = adminCheck && adminCheck.length && adminCheck[0].is_admin === true
+    } catch (e) {}
+    if (exist[0].user_id !== userId && !isAdmin) return c.json({ message: '只能删除自己的评论' }, 403)
+    await adminFetch(c, `task_comments?id=eq.${cid}`, { method: 'DELETE' })
+    return c.json({ ok: true })
+  } catch (e) {
+    return c.json({ message: e.message }, 500)
+  }
+})
+
+// ============================================================
+// 标签
+// ============================================================
+app.get('/api/tags', requireUser, async (c) => {
+  try {
+    const data = await adminFetch(c, 'tags?select=id,name,color&order=name.asc')
+    return c.json(data || [])
+  } catch (e) {
+    return c.json({ message: e.message }, 500)
+  }
+})
+
+app.post('/api/tags', requireUser, async (c) => {
+  try {
+    const userId = c.get('userId')
+    // 只有管理员能创建标签
+    let isAdmin = false
+    try {
+      const adminCheck = await adminFetch(c, `users?id=eq.${userId}&select=is_admin`)
+      isAdmin = adminCheck && adminCheck.length && adminCheck[0].is_admin === true
+    } catch (e) {}
+    if (!isAdmin) return c.json({ message: '只有管理员能创建标签' }, 403)
+
+    const body = await c.req.json()
+    const { name, color } = body
+    if (!name) return c.json({ message: '标签名必填' }, 400)
+    const data = await adminFetch(c, 'tags', {
+      method: 'POST',
+      body: JSON.stringify({ name, color: color || '#1989fa' })
+    })
+    return c.json(Array.isArray(data) ? data[0] : data)
+  } catch (e) {
+    return c.json({ message: e.message }, 500)
+  }
+})
+
+// 给任务添加/移除标签
+app.post('/api/tasks/:id/tags/:tagId', requireUser, async (c) => {
+  try {
+    const id = c.req.param('id')
+    const tagId = c.req.param('tagId')
+    await adminFetch(c, 'task_tags', {
+      method: 'POST',
+      body: JSON.stringify({ task_id: id, tag_id: tagId }),
+      headers: { 'prefer': 'return=minimal' }
+    })
+    return c.json({ ok: true })
+  } catch (e) {
+    // 重复添加忽略
+    return c.json({ ok: true })
+  }
+})
+
+app.delete('/api/tasks/:id/tags/:tagId', requireUser, async (c) => {
+  try {
+    const id = c.req.param('id')
+    const tagId = c.req.param('tagId')
+    await adminFetch(c, `task_tags?task_id=eq.${id}&tag_id=eq.${tagId}`, { method: 'DELETE' })
+    return c.json({ ok: true })
+  } catch (e) {
+    return c.json({ message: e.message }, 500)
+  }
+})
+
+// 子任务列表
+app.get('/api/tasks/:id/subtasks', requireUser, async (c) => {
+  try {
+    const id = c.req.param('id')
+    const data = await adminFetch(c, `tasks?parent_id=eq.${id}&select=id,title,status,priority,assignee:users!tasks_assignee_id_fkey(id,name),due_date&order=created_at.asc`)
+    return c.json(data || [])
+  } catch (e) {
+    return c.json({ message: e.message }, 500)
+  }
+})
+
+// 统计导出 CSV
+app.get('/api/stats/export', requireUser, async (c) => {
+  try {
+    const userId = c.get('userId')
+    // 查管理员
+    let isAdmin = false
+    try {
+      const adminCheck = await adminFetch(c, `users?id=eq.${userId}&select=is_admin`)
+      isAdmin = adminCheck && adminCheck.length && adminCheck[0].is_admin === true
+    } catch (e) {}
+
+    // 管理员看全部,非管理员看自己相关的
+    let tasks
+    if (isAdmin) {
+      tasks = await adminFetch(c, `tasks?select=id,title,status,priority,creator:users!tasks_creator_id_fkey(name),assignee:users!tasks_assignee_id_fkey(name),reviewer:users!tasks_reviewer_id_fkey(name),due_date,created_at&order=created_at.desc`)
+    } else {
+      tasks = await adminFetch(c, `tasks?or=(creator_id.eq.${userId},assignee_id.eq.${userId},reviewer_id.eq.${userId})&select=id,title,status,priority,creator:users!tasks_creator_id_fkey(name),assignee:users!tasks_assignee_id_fkey(name),reviewer:users!tasks_reviewer_id_fkey(name),due_date,created_at&order=created_at.desc`)
+    }
+    const list = tasks || []
+
+    const STATUS_LABELS = { todo: '待办', in_progress: '进行中', pending_review: '待审核', done: '已完成', rejected: '已驳回', closed: '已关闭' }
+    const PRIORITY_LABELS = { low: '低', medium: '中', high: '高', urgent: '紧急' }
+
+    const header = 'ID,标题,状态,优先级,创建人,负责人,审批人,截止日期,创建时间'
+    const rows = list.map(t => [
+      t.id,
+      `"${(t.title || '').replace(/"/g, '""')}"`,
+      STATUS_LABELS[t.status] || t.status,
+      PRIORITY_LABELS[t.priority] || t.priority,
+      `"${t.creator?.name || '-'}"`,
+      `"${t.assignee?.name || '-'}"`,
+      `"${t.reviewer?.name || '-'}"`,
+      t.due_date || '-',
+      t.created_at ? new Date(t.created_at).toLocaleString('zh-CN') : '-'
+    ].join(','))
+
+    const csv = '\ufeff' + header + '\n' + rows.join('\n')
+    return new Response(csv, {
+      headers: {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename="tasks_${new Date().toISOString().slice(0,10)}.csv"`
+      }
+    })
   } catch (e) {
     return c.json({ message: e.message }, 500)
   }

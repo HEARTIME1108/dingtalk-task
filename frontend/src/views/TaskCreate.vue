@@ -68,6 +68,12 @@
             label="截止日期" is-link readonly
             :model-value="form.due_date || ''" placeholder="请选择"
             @click="showDate = true" />
+          <van-field
+            label="标签"
+            is-link readonly
+            :model-value="selectedTags.length ? selectedTags.map(t=>t.name).join('、') : '请选择'"
+            @click="showTags = true"
+          />
         </van-cell-group>
 
         <div style="padding:16px;">
@@ -120,6 +126,19 @@
           @confirm="onPickDate"
           @cancel="showDate = false" />
       </van-popup>
+
+      <van-popup v-model:show="showTags" position="bottom" round>
+        <van-checkbox-group v-model="selectedTagIds">
+          <van-cell v-for="t in allTags" :key="t.id" :title="t.name" clickable>
+            <template #right-icon>
+              <van-checkbox :name="t.id" />
+            </template>
+          </van-cell>
+        </van-checkbox-group>
+        <div style="padding:12px;">
+          <van-button type="primary" block @click="showTags = false">确定</van-button>
+        </div>
+      </van-popup>
     </template>
   </div>
 </template>
@@ -127,7 +146,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { fetchUsers, createTask, PRIORITY_LABEL, TASK_TYPE_LABEL } from '../api/task'
+import { fetchUsers, createTask, fetchTags, addTagToTask, PRIORITY_LABEL, TASK_TYPE_LABEL } from '../api/task'
 
 const router = useRouter()
 const form = ref({
@@ -147,6 +166,11 @@ const dateVal = ref([])
 const errorMsg = ref('')
 const success = ref(false)
 const successTitle = ref('')
+
+const allTags = ref([])
+const selectedTagIds = ref([])
+const selectedTags = computed(() => allTags.value.filter(t => selectedTagIds.value.includes(t.id)))
+const showTags = ref(false)
 
 // 已选的负责人/审批人/部门主任的 id 集合
 const excludedIds = computed(() => {
@@ -194,7 +218,13 @@ async function onSubmit() {
     if (payload.task_type !== 'department') {
       delete payload.department_head_id
     }
-    await createTask(payload)
+    const task = await createTask(payload)
+    // 给任务加标签
+    if (selectedTagIds.value.length && task.id) {
+      for (const tagId of selectedTagIds.value) {
+        try { await addTagToTask(task.id, tagId) } catch (e) {}
+      }
+    }
     // 成功：直接在当前页面切换到成功页，不跳转不弹窗
     successTitle.value = form.value.title
     success.value = true
@@ -208,6 +238,7 @@ async function onSubmit() {
 onMounted(async () => {
   try {
     users.value = await fetchUsers()
+    allTags.value = await fetchTags()
   } catch (e) {
     errorMsg.value = '加载用户列表失败：' + (e.message || '')
   }

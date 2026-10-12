@@ -20,6 +20,11 @@ const routes = [
     meta: { requiresAuth: true, title: '任务详情' }
   },
   {
+    path: '/tasks/:id/edit', name: 'taskEdit',
+    component: () => import('../views/TaskEdit.vue'),
+    meta: { requiresAuth: true, title: '编辑任务' }
+  },
+  {
     path: '/dashboard', name: 'dashboard',
     component: () => import('../views/Dashboard.vue'),
     meta: { requiresAuth: true, title: '统计报表' }

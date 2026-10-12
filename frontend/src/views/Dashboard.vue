@@ -1,6 +1,10 @@
 <template>
   <div class="page">
-    <van-nav-bar title="统计报表" left-arrow @click-left="$router.back()" fixed placeholder />
+    <van-nav-bar title="统计报表" left-arrow @click-left="$router.back()" fixed placeholder>
+      <template #right>
+        <van-icon name="down" size="20" @click="onExport" />
+      </template>
+    </van-nav-bar>
 
     <van-cell-group inset title="任务概览">
       <van-grid :column-num="2" :border="false">
@@ -26,7 +30,7 @@
 import { ref, onMounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import { showToast } from 'vant'
-import { STATUS_LABEL } from '../api/task'
+import { STATUS_LABEL, exportStats } from '../api/task'
 
 const statusChart = ref()
 const assigneeChart = ref()
@@ -115,6 +119,20 @@ function drawTrend(tasks) {
     yAxis: { type: 'value', minInterval: 1 },
     series: [{ type: 'line', data: counts, smooth: true, areaStyle: {}, itemStyle: { color: '#07c160' } }]
   })
+}
+
+async function onExport() {
+  try {
+    const blob = await exportStats()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `tasks_${new Date().toISOString().slice(0,10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    showToast(e.message || '导出失败')
+  }
 }
 
 onMounted(loadData)

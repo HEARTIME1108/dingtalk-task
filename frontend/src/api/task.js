@@ -156,3 +156,77 @@ export async function transitionTask(taskId, fromStatus, toStatus, comment) {
     body: JSON.stringify({ to_status: toStatus, comment })
   })
 }
+
+// ============================================================
+// 任务编辑
+// ============================================================
+export async function updateTaskFull(id, payload) {
+  return apiCall(`/tasks/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  })
+}
+
+// ============================================================
+// 附件
+// ============================================================
+export async function fetchAttachments(taskId) {
+  return apiCall(`/tasks/${taskId}/attachments`)
+}
+export async function addAttachment(taskId, payload) {
+  return apiCall(`/tasks/${taskId}/attachments`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+}
+export async function deleteAttachment(taskId, aid) {
+  return apiCall(`/tasks/${taskId}/attachments/${aid}`, { method: 'DELETE' })
+}
+
+// ============================================================
+// 评论
+// ============================================================
+export async function fetchComments(taskId) {
+  return apiCall(`/tasks/${taskId}/comments`)
+}
+export async function addComment(taskId, content) {
+  return apiCall(`/tasks/${taskId}/comments`, {
+    method: 'POST',
+    body: JSON.stringify({ content })
+  })
+}
+export async function deleteComment(taskId, cid) {
+  return apiCall(`/tasks/${taskId}/comments/${cid}`, { method: 'DELETE' })
+}
+
+// ============================================================
+// 标签
+// ============================================================
+export async function fetchTags() {
+  return apiCall('/tags')
+}
+export async function addTagToTask(taskId, tagId) {
+  return apiCall(`/tasks/${taskId}/tags/${tagId}`, { method: 'POST' })
+}
+export async function removeTagFromTask(taskId, tagId) {
+  return apiCall(`/tasks/${taskId}/tags/${tagId}`, { method: 'DELETE' })
+}
+
+// ============================================================
+// 子任务
+// ============================================================
+export async function fetchSubtasks(taskId) {
+  return apiCall(`/tasks/${taskId}/subtasks`)
+}
+
+// ============================================================
+// 统计导出
+// ============================================================
+export async function exportStats() {
+  const token = getToken()
+  const res = await fetch(`${API_BASE}/stats/export`, {
+    headers: { 'Authorization': `Bearer ${token}` }
+  })
+  if (!res.ok) throw new Error('导出失败')
+  return res.blob()
+}
