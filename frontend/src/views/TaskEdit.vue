@@ -121,7 +121,8 @@
 
       <van-popup v-model:show="showCollaborators" position="bottom" round>
         <van-checkbox-group v-model="collaboratorIds">
-          <van-cell v-for="u in collaboratorCandidates" :key="u.id" :title="u.name" clickable>
+          <van-cell v-for="u in collaboratorCandidates" :key="u.id" :title="u.name" clickable
+            @click="toggleArrayItem(collaboratorIds, u.id)">
             <template #right-icon>
               <van-checkbox :name="u.id" />
             </template>
@@ -144,7 +145,8 @@
 
       <van-popup v-model:show="showTags" position="bottom" round>
         <van-checkbox-group v-model="selectedTagIds">
-          <van-cell v-for="t in allTags" :key="t.id" :title="t.name" clickable>
+          <van-cell v-for="t in allTags" :key="t.id" :title="t.name" clickable
+            @click="toggleArrayItem(selectedTagIds, t.id)">
             <template #right-icon>
               <van-checkbox :name="t.id" />
             </template>
@@ -258,6 +260,15 @@ function labelOf(uid) {
 function onPick({ selectedValues }, key, refShow) {
   form.value[key] = selectedValues[0]
   refShow.value = false
+}
+
+function toggleArrayItem(arr, id) {
+  const idx = arr.value.indexOf(id)
+  if (idx >= 0) {
+    arr.value.splice(idx, 1)
+  } else {
+    arr.value.push(id)
+  }
 }
 
 function onPickDate({ selectedValues }) {

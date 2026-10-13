@@ -144,6 +144,13 @@ export async function deleteTask(id) {
   return apiCall(`/tasks/${id}`, { method: 'DELETE' })
 }
 
+export async function quickCompleteTask(id, comment) {
+  return apiCall(`/tasks/${id}/quick-complete`, {
+    method: 'POST',
+    body: JSON.stringify({ comment: comment || '一键完成' })
+  })
+}
+
 // ============================================================
 // 审批流转
 // ============================================================

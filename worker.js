@@ -887,6 +887,38 @@ app.post('/api/tasks/:id/transition', requireUser, async (c) => {
   }
 })
 
+// 一键完成（跳过流转规则，直接改为 done）
+app.post('/api/tasks/:id/quick-complete', requireUser, async (c) => {
+  try {
+    const userId = c.get('userId')
+    const id = c.req.param('id')
+    const body = await c.req.json().catch(() => ({}))
+    const comment = body.comment || '一键完成'
+
+    const data = await adminFetch(c, `tasks?id=eq.${id}&select=*`)
+    if (!data || !data.length) return c.json({ message: '任务不存在' }, 404)
+    const task = data[0]
+    if (task.status === 'done' || task.status === 'closed') {
+      return c.json({ message: '任务已完成或关闭' }, 400)
+    }
+
+    await adminFetch(c, `tasks?id=eq.${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'done' })
+    })
+    await adminFetch(c, 'task_flows', {
+      method: 'POST',
+      body: JSON.stringify({
+        task_id: id, from_status: task.status, to_status: 'done',
+        comment, operator_id: userId
+      })
+    })
+    return c.json({ ok: true })
+  } catch (e) {
+    return c.json({ message: e.message }, 500)
+  }
+})
+
 // 当前登录用户信息(含 is_admin)
 app.get('/api/me', requireUser, async (c) => {
   try {
@@ -1038,15 +1070,6 @@ app.get('/api/tags', requireUser, async (c) => {
 
 app.post('/api/tags', requireUser, async (c) => {
   try {
-    const userId = c.get('userId')
-    // 只有管理员能创建标签
-    let isAdmin = false
-    try {
-      const adminCheck = await adminFetch(c, `users?id=eq.${userId}&select=is_admin`)
-      isAdmin = adminCheck && adminCheck.length && adminCheck[0].is_admin === true
-    } catch (e) {}
-    if (!isAdmin) return c.json({ message: '只有管理员能创建标签' }, 403)
-
     const body = await c.req.json()
     const { name, color } = body
     if (!name) return c.json({ message: '标签名必填' }, 400)
@@ -1091,14 +1114,6 @@ app.delete('/api/tasks/:id/tags/:tagId', requireUser, async (c) => {
 // 修改标签
 app.put('/api/tags/:id', requireUser, async (c) => {
   try {
-    const userId = c.get('userId')
-    let isAdmin = false
-    try {
-      const adminCheck = await adminFetch(c, `users?id=eq.${userId}&select=is_admin`)
-      isAdmin = adminCheck && adminCheck.length && adminCheck[0].is_admin === true
-    } catch (e) {}
-    if (!isAdmin) return c.json({ message: '只有管理员能修改标签' }, 403)
-
     const id = c.req.param('id')
     const body = await c.req.json()
     const { name, color } = body
@@ -1119,14 +1134,6 @@ app.put('/api/tags/:id', requireUser, async (c) => {
 // 删除标签
 app.delete('/api/tags/:id', requireUser, async (c) => {
   try {
-    const userId = c.get('userId')
-    let isAdmin = false
-    try {
-      const adminCheck = await adminFetch(c, `users?id=eq.${userId}&select=is_admin`)
-      isAdmin = adminCheck && adminCheck.length && adminCheck[0].is_admin === true
-    } catch (e) {}
-    if (!isAdmin) return c.json({ message: '只有管理员能删除标签' }, 403)
-
     const id = c.req.param('id')
     // 先删关联
     await adminFetch(c, `task_tags?tag_id=eq.${id}`, { method: 'DELETE' })
