@@ -1,8 +1,8 @@
 <template>
   <div id="app-root">
-    <!-- 版本号调试标识(右上角小字,方便确认是否加载了最新代码) -->
-    <div style="position:fixed;top:2px;right:4px;font-size:9px;color:#c8c9cc;z-index:99999;pointer-events:none;">
-      v{{ __BUILD_TIME__ }}
+    <!-- 版本号(左下角,方便确认是否加载了最新代码) -->
+    <div style="position:fixed;bottom:4px;left:8px;font-size:11px;color:#c8c9cc;z-index:99999;pointer-events:none;">
+      v{{ String(__BUILD_TIME__).slice(-6) }}
     </div>
     <router-view />
   </div>

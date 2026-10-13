@@ -32,26 +32,18 @@
 
       <van-form @submit="onSubmit">
         <van-cell-group inset>
-          <van-field label="任务类型" readonly>
-            <template #input>
-              <van-radio-group v-model="form.task_type" direction="horizontal">
-                <van-radio v-for="(l, k) in TASK_TYPE_LABEL" :key="k" :name="k">{{ l }}</van-radio>
-              </van-radio-group>
-            </template>
-          </van-field>
+          <van-field label="任务类型" is-link readonly
+            :model-value="TASK_TYPE_LABEL[form.task_type] || '请选择'"
+            @click="showTaskType = true" />
           <van-field
             v-model="form.title" label="标题" placeholder="请输入任务标题"
             required :rules="[{ required: true, message: '请输入标题' }]" />
           <van-field
             v-model="form.description" label="描述"
             type="textarea" rows="3" placeholder="任务详细描述" />
-          <van-field label="优先级" readonly>
-            <template #input>
-              <van-radio-group v-model="form.priority" direction="horizontal">
-                <van-radio v-for="(l, k) in PRIORITY_LABEL" :key="k" :name="k">{{ l }}</van-radio>
-              </van-radio-group>
-            </template>
-          </van-field>
+          <van-field label="任务周期" is-link readonly
+            :model-value="PRIORITY_LABEL[form.priority] || '请选择'"
+            @click="showPriority = true" />
           <van-field
             label="负责人" is-link readonly
             :model-value="labelOf(form.assignee_id)"
@@ -73,6 +65,12 @@
             label="截止日期" is-link readonly
             :model-value="form.due_date || ''" placeholder="请选择"
             @click="showDate = true" />
+          <van-field
+            label="标签"
+            is-link readonly
+            :model-value="selectedTags.length ? selectedTags.map(t=>t.name).join('、') : '请选择'"
+            @click="showTags = true"
+          />
         </van-cell-group>
 
         <div style="padding:16px;">
@@ -83,24 +81,42 @@
       </van-form>
 
       <van-popup v-model:show="showAssignee" position="bottom" round>
-        <van-picker
-          :columns="userColumns"
-          @confirm="onPick($event, 'assignee_id', showAssignee)"
-          @cancel="showAssignee = false" />
+        <van-radio-group v-model="form.assignee_id">
+          <van-cell v-for="u in users" :key="u.id" :title="u.name" clickable @click="form.assignee_id = u.id">
+            <template #right-icon>
+              <van-radio :name="u.id" />
+            </template>
+          </van-cell>
+        </van-radio-group>
+        <div style="padding:12px;">
+          <van-button type="primary" block @click="showAssignee = false">确定</van-button>
+        </div>
       </van-popup>
 
       <van-popup v-model:show="showReviewer" position="bottom" round>
-        <van-picker
-          :columns="userColumns"
-          @confirm="onPick($event, 'reviewer_id', showReviewer)"
-          @cancel="showReviewer = false" />
+        <van-radio-group v-model="form.reviewer_id">
+          <van-cell v-for="u in users" :key="u.id" :title="u.name" clickable @click="form.reviewer_id = u.id">
+            <template #right-icon>
+              <van-radio :name="u.id" />
+            </template>
+          </van-cell>
+        </van-radio-group>
+        <div style="padding:12px;">
+          <van-button type="primary" block @click="showReviewer = false">确定</van-button>
+        </div>
       </van-popup>
 
       <van-popup v-model:show="showDepartmentHead" position="bottom" round>
-        <van-picker
-          :columns="userColumns"
-          @confirm="onPick($event, 'department_head_id', showDepartmentHead)"
-          @cancel="showDepartmentHead = false" />
+        <van-radio-group v-model="form.department_head_id">
+          <van-cell v-for="u in users" :key="u.id" :title="u.name" clickable @click="form.department_head_id = u.id">
+            <template #right-icon>
+              <van-radio :name="u.id" />
+            </template>
+          </van-cell>
+        </van-radio-group>
+        <div style="padding:12px;">
+          <van-button type="primary" block @click="showDepartmentHead = false">确定</van-button>
+        </div>
       </van-popup>
 
       <van-popup v-model:show="showCollaborators" position="bottom" round>
@@ -125,6 +141,53 @@
           @confirm="onPickDate"
           @cancel="showDate = false" />
       </van-popup>
+
+      <van-popup v-model:show="showTags" position="bottom" round>
+        <van-checkbox-group v-model="selectedTagIds">
+          <van-cell v-for="t in allTags" :key="t.id" :title="t.name" clickable>
+            <template #right-icon>
+              <van-checkbox :name="t.id" />
+            </template>
+          </van-cell>
+        </van-checkbox-group>
+        <div v-if="allTags.length === 0" style="padding:24px;text-align:center;color:#969799;font-size:14px;">
+          暂无标签，请先在分类设置中添加
+        </div>
+        <div style="padding:12px;">
+          <van-button type="primary" block @click="showTags = false">确定</van-button>
+        </div>
+      </van-popup>
+
+      <van-popup v-model:show="showTaskType" position="bottom" round>
+        <van-radio-group v-model="form.task_type">
+          <van-cell v-for="(l, k) in TASK_TYPE_LABEL" :key="k" :title="l" clickable @click="form.task_type = k">
+            <template #right-icon>
+              <van-radio :name="k" />
+            </template>
+          </van-cell>
+        </van-radio-group>
+        <div style="padding:12px;">
+          <van-button type="primary" block @click="showTaskType = false">确定</van-button>
+        </div>
+      </van-popup>
+
+      <van-popup v-model:show="showPriority" position="bottom" round>
+        <van-radio-group v-model="form.priority">
+          <van-cell title="不选" clickable @click="form.priority = ''">
+            <template #right-icon>
+              <van-radio name="" />
+            </template>
+          </van-cell>
+          <van-cell v-for="(l, k) in PRIORITY_LABEL" :key="k" :title="l" clickable @click="form.priority = k">
+            <template #right-icon>
+              <van-radio :name="k" />
+            </template>
+          </van-cell>
+        </van-radio-group>
+        <div style="padding:12px;">
+          <van-button type="primary" block @click="showPriority = false">确定</van-button>
+        </div>
+      </van-popup>
     </template>
   </div>
 </template>
@@ -133,13 +196,13 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  fetchUsers, fetchTask, updateTaskFull,
+  fetchUsers, fetchTask, updateTaskFull, fetchTags, addTagToTask, removeTagFromTask,
   PRIORITY_LABEL, TASK_TYPE_LABEL
 } from '../api/task'
 
 const route = useRoute()
 const form = ref({
-  title: '', description: '', priority: 'medium',
+  title: '', description: '', priority: '',
   task_type: 'department',
   assignee_id: null, reviewer_id: null, department_head_id: null, due_date: null
 })
@@ -151,11 +214,19 @@ const showReviewer = ref(false)
 const showDepartmentHead = ref(false)
 const showCollaborators = ref(false)
 const showDate = ref(false)
+const showTaskType = ref(false)
+const showPriority = ref(false)
 const collaboratorIds = ref([])
 const dateVal = ref([])
 const errorMsg = ref('')
 const success = ref(false)
 const successTitle = ref('')
+
+const allTags = ref([])
+const selectedTagIds = ref([])
+const originalTagIds = ref([])
+const showTags = ref(false)
+const selectedTags = computed(() => allTags.value.filter(t => selectedTagIds.value.includes(t.id)))
 
 // 已选的负责人/审批人/部门主任的 id 集合
 const excludedIds = computed(() => {
@@ -204,6 +275,18 @@ async function onSubmit() {
       delete payload.department_head_id
     }
     await updateTaskFull(route.params.id, payload)
+
+    // 更新标签：计算新增和移除
+    const taskId = route.params.id
+    const toAdd = selectedTagIds.value.filter(id => !originalTagIds.value.includes(id))
+    const toRemove = originalTagIds.value.filter(id => !selectedTagIds.value.includes(id))
+    for (const tagId of toAdd) {
+      try { await addTagToTask(taskId, tagId) } catch (e) {}
+    }
+    for (const tagId of toRemove) {
+      try { await removeTagFromTask(taskId, tagId) } catch (e) {}
+    }
+
     successTitle.value = form.value.title
     success.value = true
   } catch (e) {
@@ -215,12 +298,14 @@ async function onSubmit() {
 
 onMounted(async () => {
   try {
-    // 同时加载用户列表和任务详情
-    const [usersData, taskData] = await Promise.all([
+    // 同时加载用户列表、任务详情、标签列表
+    const [usersData, taskData, tagsData] = await Promise.all([
       fetchUsers(),
-      fetchTask(route.params.id)
+      fetchTask(route.params.id),
+      fetchTags()
     ])
     users.value = usersData
+    allTags.value = tagsData || []
     // 填充表单
     form.value = {
       title: taskData.title || '',
@@ -240,6 +325,11 @@ onMounted(async () => {
         // 排除已是负责人/审批人/部门主任的
         .filter(id => !excludedIds.value.has(id))
     }
+    // 填充已选标签
+    if (taskData.tags?.length) {
+      selectedTagIds.value = taskData.tags.map(t => t.tag_id || t.id)
+    }
+    originalTagIds.value = [...selectedTagIds.value]
     // 填充日期选择器
     if (taskData.due_date) {
       dateVal.value = taskData.due_date.split('-')

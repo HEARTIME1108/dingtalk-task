@@ -2,6 +2,7 @@
   <div class="page">
     <van-nav-bar title="任务列表" fixed placeholder>
       <template #right>
+        <van-icon name="setting-o" size="20" style="margin-right:12px;" @click="$router.push('/settings')" />
         <van-icon name="chart-trending-o" size="20" @click="$router.push('/dashboard')" />
       </template>
     </van-nav-bar>
@@ -16,7 +17,7 @@
       <van-tag v-for="t in allTags" :key="t.id"
         :type="activeTag === t.id ? 'primary' : 'default'"
         size="medium" plain round @click="toggleTag(t.id)"
-      >{{ t.name }}</van-tag>
+      >{{ t.name }}({{ tagCounts[t.id] || 0 }})</van-tag>
     </div>
 
     <!-- 错误提示（红底白字，内联style）-->
@@ -38,16 +39,16 @@
             <van-tag v-if="t.task_type" type="primary" plain size="medium">
               {{ TASK_TYPE_LABEL[t.task_type] }}
             </van-tag>
-            <van-tag :color="PRIORITY_COLOR[t.priority]" plain>
+            <van-tag v-if="t.priority" :color="PRIORITY_COLOR[t.priority]" plain>
               {{ PRIORITY_LABEL[t.priority] }}
             </van-tag>
             <span class="title">{{ t.title }}</span>
+            <span v-if="t.assignee" class="assignee-right">@{{ t.assignee.name }}</span>
           </div>
           <div class="task-meta">
             <van-tag :color="STATUS_COLOR[t.status]" size="medium">
               {{ STATUS_LABEL[t.status] }}
             </van-tag>
-            <span v-if="t.assignee" class="assignee">@{{ t.assignee.name }}</span>
             <span v-if="t.task_type === 'department' && t.department_head" class="assignee">主任 @{{ t.department_head.name }}</span>
             <span v-if="t.due_date" class="due">截止 {{ t.due_date }}</span>
           </div>
@@ -86,6 +87,7 @@ const counts = ref({ all: 0, todo: 0, in_progress: 0, pending_review: 0, done: 0
 
 const allTags = ref([])
 const activeTag = ref(null)
+const tagCounts = ref({})
 
 function toggleTag(id) {
   activeTag.value = activeTag.value === id ? null : id
@@ -103,6 +105,17 @@ async function load() {
   errorMsg.value = ''
   try {
     let list = await fetchTasks({ status: active.value, keyword: keyword.value })
+    // 计算每个标签关联的任务数（在标签筛选之前算）
+    const tc = {}
+    for (const t of list) {
+      if (t.tags) {
+        for (const tg of t.tags) {
+          const tid = tg.tag_id || tg.id
+          tc[tid] = (tc[tid] || 0) + 1
+        }
+      }
+    }
+    tagCounts.value = tc
     // 前端按标签筛选（如果任务带 tags 字段）
     if (activeTag.value) {
       list = list.filter(t => t.tags?.some(tg => (tg.tag_id || tg.id) === activeTag.value))
@@ -133,7 +146,8 @@ watch(() => route.path, (newPath) => {
 .page { min-height: 100vh; background: #f7f8fa; padding-bottom: 60px; }
 .task-cell { margin: 8px 12px; border-radius: 8px; overflow: hidden; }
 .task-row { display: flex; align-items: center; gap: 8px; }
-.task-row .title { font-size: 15px; font-weight: 500; }
+.task-row .title { font-size: 15px; font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.assignee-right { font-size: 13px; color: #646566; white-space: nowrap; }
 .task-meta {
   display: flex; align-items: center; gap: 10px;
   margin-top: 6px; color: #969799; font-size: 12px;

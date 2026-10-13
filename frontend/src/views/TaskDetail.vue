@@ -26,9 +26,10 @@
       <van-cell title="标题">
         <template #value><span class="strong">{{ task.title }}</span></template>
       </van-cell>
-      <van-cell title="优先级">
+      <van-cell title="任务周期">
         <template #value>
-          <van-tag :color="PRIORITY_COLOR[task.priority]" plain>{{ PRIORITY_LABEL[task.priority] }}</van-tag>
+          <van-tag v-if="task.priority" :color="PRIORITY_COLOR[task.priority]" plain>{{ PRIORITY_LABEL[task.priority] }}</van-tag>
+          <span v-else style="color:#969799;">未设置</span>
         </template>
       </van-cell>
       <van-cell title="状态">

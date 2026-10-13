@@ -28,6 +28,11 @@ const routes = [
     path: '/dashboard', name: 'dashboard',
     component: () => import('../views/Dashboard.vue'),
     meta: { requiresAuth: true, title: '统计报表' }
+  },
+  {
+    path: '/settings', name: 'settings',
+    component: () => import('../views/Settings.vue'),
+    meta: { requiresAuth: true, title: '分类设置' }
   }
 ]
 

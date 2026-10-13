@@ -35,8 +35,8 @@ export const TASK_TYPE_LABEL = {
   department: '部门任务'
 }
 
-export const PRIORITY_LABEL = { low: '低', medium: '中', high: '高', urgent: '紧急' }
-export const PRIORITY_COLOR = { low: '#969799', medium: '#1989fa', high: '#ff976a', urgent: '#ee0a24' }
+export const PRIORITY_LABEL = { daily: '日任务', weekly: '周任务', monthly: '月任务', quarterly: '季度任务', yearly: '年任务' }
+export const PRIORITY_COLOR = { daily: '#ee0a24', weekly: '#ff976a', monthly: '#1989fa', quarterly: '#7232dd', yearly: '#07c160' }
 
 export function canTransition(from, to) {
   return STATUS_FLOW[from]?.includes(to)
@@ -210,6 +210,15 @@ export async function addTagToTask(taskId, tagId) {
 }
 export async function removeTagFromTask(taskId, tagId) {
   return apiCall(`/tasks/${taskId}/tags/${tagId}`, { method: 'DELETE' })
+}
+export async function createTag(name, color) {
+  return apiCall('/tags', { method: 'POST', body: JSON.stringify({ name, color }) })
+}
+export async function updateTag(id, payload) {
+  return apiCall(`/tags/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
+}
+export async function deleteTag(id) {
+  return apiCall(`/tags/${id}`, { method: 'DELETE' })
 }
 
 // ============================================================

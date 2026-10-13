@@ -469,9 +469,9 @@ app.get('/api/tasks', requireUser, async (c) => {
       : 'id.eq.00000000-0000-0000-0000-000000000000'
     let orCond = `creator_id.eq.${userId},assignee_id.eq.${userId},reviewer_id.eq.${userId},${idList}`
 
-    // select 带 department_head join(department_head_id 列可能不存在,失败时回退)
-    const selectClause = `select=*,creator:users!tasks_creator_id_fkey(id,name,avatar_url),assignee:users!tasks_assignee_id_fkey(id,name,avatar_url),reviewer:users!tasks_reviewer_id_fkey(id,name,avatar_url),department_head:users!tasks_department_head_id_fkey(id,name,avatar_url)`
-    const selectClauseFallback = `select=*,creator:users!tasks_creator_id_fkey(id,name,avatar_url),assignee:users!tasks_assignee_id_fkey(id,name,avatar_url),reviewer:users!tasks_reviewer_id_fkey(id,name,avatar_url)`
+    // select 带 department_head join + tags(department_head_id 列可能不存在,失败时回退)
+    const selectClause = `select=*,creator:users!tasks_creator_id_fkey(id,name,avatar_url),assignee:users!tasks_assignee_id_fkey(id,name,avatar_url),reviewer:users!tasks_reviewer_id_fkey(id,name,avatar_url),department_head:users!tasks_department_head_id_fkey(id,name,avatar_url),tags:task_tags(tag_id,tag:tags(id,name,color))`
+    const selectClauseFallback = `select=*,creator:users!tasks_creator_id_fkey(id,name,avatar_url),assignee:users!tasks_assignee_id_fkey(id,name,avatar_url),reviewer:users!tasks_reviewer_id_fkey(id,name,avatar_url),tags:task_tags(tag_id,tag:tags(id,name,color))`
 
     if (status === 'todo') {
       // "待办"智能过滤:当前用户需要操作的任务(条件本身已限定用户,无需再叠加 orCond)
@@ -539,7 +539,8 @@ app.get('/api/tasks/counts', requireUser, async (c) => {
       : 'id.eq.00000000-0000-0000-0000-000000000000'
     const orCond = `creator_id.eq.${userId},assignee_id.eq.${userId},reviewer_id.eq.${userId},${idList}`
 
-    const selectClause = `select=*,creator:users!tasks_creator_id_fkey(id,name,avatar_url),assignee:users!tasks_assignee_id_fkey(id,name,avatar_url),reviewer:users!tasks_reviewer_id_fkey(id,name,avatar_url)`
+    // 用最简 select 避免外键关系不存在导致报错
+    const selectClause = `select=*`
 
     // 全部任务计数
     let allUrl = `tasks?${selectClause}&or=(${orCond})`
@@ -594,17 +595,36 @@ app.get('/api/tasks/:id', requireUser, async (c) => {
   try {
     const userId = c.get('userId')
     const id = c.req.param('id')
-    const selectWithDH = `*,creator:users!tasks_creator_id_fkey(id,name,avatar_url),assignee:users!tasks_assignee_id_fkey(id,name,avatar_url),reviewer:users!tasks_reviewer_id_fkey(id,name,avatar_url),department_head:users!tasks_department_head_id_fkey(id,name,avatar_url),assignees:task_assignees(user_id,role,user:users(id,name,avatar_url)),flows:task_flows(id,from_status,to_status,comment,created_at,operator:users(name,avatar_url)),subtasks:tasks!tasks_parent_id_fkey(id,title,status,priority,assignee:users!tasks_assignee_id_fkey(id,name))`
-    const selectWithoutDH = `*,creator:users!tasks_creator_id_fkey(id,name,avatar_url),assignee:users!tasks_assignee_id_fkey(id,name,avatar_url),reviewer:users!tasks_reviewer_id_fkey(id,name,avatar_url),assignees:task_assignees(user_id,role,user:users(id,name,avatar_url)),flows:task_flows(id,from_status,to_status,comment,created_at,operator:users(name,avatar_url)),subtasks:tasks!tasks_parent_id_fkey(id,title,status,priority,assignee:users!tasks_assignee_id_fkey(id,name))`
+    // 三级 fallback:完整 join → 简化 join(去掉 DH+subtasks) → 最简 join
+    const selectFull = `*,creator:users!tasks_creator_id_fkey(id,name,avatar_url),assignee:users!tasks_assignee_id_fkey(id,name,avatar_url),reviewer:users!tasks_reviewer_id_fkey(id,name,avatar_url),department_head:users!tasks_department_head_id_fkey(id,name,avatar_url),assignees:task_assignees(user_id,role,user:users(id,name,avatar_url)),flows:task_flows(id,from_status,to_status,comment,created_at,operator:users(name,avatar_url)),subtasks:tasks!tasks_parent_id_fkey(id,title,status,priority,assignee:users!tasks_assignee_id_fkey(id,name))`
+    const selectMid = `*,creator:users!tasks_creator_id_fkey(id,name,avatar_url),assignee:users!tasks_assignee_id_fkey(id,name,avatar_url),reviewer:users!tasks_reviewer_id_fkey(id,name,avatar_url),assignees:task_assignees(user_id,role,user:users(id,name,avatar_url)),flows:task_flows(id,from_status,to_status,comment,created_at,operator:users(name,avatar_url))`
+    const selectBasic = `*,creator:users!tasks_creator_id_fkey(id,name,avatar_url),assignee:users!tasks_assignee_id_fkey(id,name,avatar_url),reviewer:users!tasks_reviewer_id_fkey(id,name,avatar_url)`
     let data
     try {
-      data = await adminFetch(c, `tasks?id=eq.${id}&select=${selectWithDH}`)
-    } catch (e) {
-      // department_head_id 列可能不存在,回退不带 department_head join
-      data = await adminFetch(c, `tasks?id=eq.${id}&select=${selectWithoutDH}`)
+      data = await adminFetch(c, `tasks?id=eq.${id}&select=${selectFull}`)
+    } catch (e1) {
+      try {
+        data = await adminFetch(c, `tasks?id=eq.${id}&select=${selectMid}`)
+      } catch (e2) {
+        data = await adminFetch(c, `tasks?id=eq.${id}&select=${selectBasic}`)
+      }
     }
     if (!data || !data.length) return c.json({ message: '任务不存在' }, 404)
     const task = data[0]
+
+    // 如果 selectFull 失败,单独查 subtasks
+    if (!task.subtasks) {
+      try {
+        task.subtasks = await adminFetch(c, `tasks?parent_id=eq.${id}&select=id,title,status,priority`) || []
+      } catch (e) { task.subtasks = [] }
+    }
+    // 如果 selectFull 失败,单独查 department_head
+    if (!task.department_head && task.department_head_id) {
+      try {
+        const dh = await adminFetch(c, `users?id=eq.${task.department_head_id}&select=id,name,avatar_url`)
+        task.department_head = dh && dh[0] ? dh[0] : null
+      } catch (e) {}
+    }
 
     // 查当前用户是否管理员(放在 isMember 判断之前,管理员可以访问所有任务)
     let isAdmin = false
@@ -639,7 +659,7 @@ app.post('/api/tasks', requireUser, async (c) => {
 
     const basePayload = {
       title, description,
-      priority: priority || 'medium',
+      priority: priority || null,
       status: 'todo',
       creator_id: userId,
       assignee_id, reviewer_id, due_date,
@@ -1001,7 +1021,16 @@ app.delete('/api/tasks/:id/comments/:cid', requireUser, async (c) => {
 app.get('/api/tags', requireUser, async (c) => {
   try {
     const data = await adminFetch(c, 'tags?select=id,name,color&order=name.asc')
-    return c.json(data || [])
+    // 查每个标签关联了多少任务
+    let counts = {}
+    try {
+      const tagTasks = await adminFetch(c, 'task_tags?select=tag_id')
+      for (const tt of (tagTasks || [])) {
+        counts[tt.tag_id] = (counts[tt.tag_id] || 0) + 1
+      }
+    } catch (e) {}
+    const result = (data || []).map(t => ({ ...t, task_count: counts[t.id] || 0 }))
+    return c.json(result)
   } catch (e) {
     return c.json({ message: e.message }, 500)
   }
@@ -1059,6 +1088,55 @@ app.delete('/api/tasks/:id/tags/:tagId', requireUser, async (c) => {
   }
 })
 
+// 修改标签
+app.put('/api/tags/:id', requireUser, async (c) => {
+  try {
+    const userId = c.get('userId')
+    let isAdmin = false
+    try {
+      const adminCheck = await adminFetch(c, `users?id=eq.${userId}&select=is_admin`)
+      isAdmin = adminCheck && adminCheck.length && adminCheck[0].is_admin === true
+    } catch (e) {}
+    if (!isAdmin) return c.json({ message: '只有管理员能修改标签' }, 403)
+
+    const id = c.req.param('id')
+    const body = await c.req.json()
+    const { name, color } = body
+    const patch = {}
+    if (name) patch.name = name
+    if (color) patch.color = color
+    const data = await adminFetch(c, `tags?id=eq.${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+      headers: { 'prefer': 'return=representation' }
+    })
+    return c.json(Array.isArray(data) ? data[0] : data)
+  } catch (e) {
+    return c.json({ message: e.message }, 500)
+  }
+})
+
+// 删除标签
+app.delete('/api/tags/:id', requireUser, async (c) => {
+  try {
+    const userId = c.get('userId')
+    let isAdmin = false
+    try {
+      const adminCheck = await adminFetch(c, `users?id=eq.${userId}&select=is_admin`)
+      isAdmin = adminCheck && adminCheck.length && adminCheck[0].is_admin === true
+    } catch (e) {}
+    if (!isAdmin) return c.json({ message: '只有管理员能删除标签' }, 403)
+
+    const id = c.req.param('id')
+    // 先删关联
+    await adminFetch(c, `task_tags?tag_id=eq.${id}`, { method: 'DELETE' })
+    await adminFetch(c, `tags?id=eq.${id}`, { method: 'DELETE' })
+    return c.json({ ok: true })
+  } catch (e) {
+    return c.json({ message: e.message }, 500)
+  }
+})
+
 // 子任务列表
 app.get('/api/tasks/:id/subtasks', requireUser, async (c) => {
   try {
@@ -1091,9 +1169,9 @@ app.get('/api/stats/export', requireUser, async (c) => {
     const list = tasks || []
 
     const STATUS_LABELS = { todo: '待办', in_progress: '进行中', pending_review: '待审核', done: '已完成', rejected: '已驳回', closed: '已关闭' }
-    const PRIORITY_LABELS = { low: '低', medium: '中', high: '高', urgent: '紧急' }
+    const PRIORITY_LABELS = { daily: '日任务', weekly: '周任务', monthly: '月任务', quarterly: '季度任务', yearly: '年任务' }
 
-    const header = 'ID,标题,状态,优先级,创建人,负责人,审批人,截止日期,创建时间'
+    const header = 'ID,标题,状态,任务周期,创建人,负责人,审批人,截止日期,创建时间'
     const rows = list.map(t => [
       t.id,
       `"${(t.title || '').replace(/"/g, '""')}"`,
