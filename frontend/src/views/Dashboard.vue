@@ -158,7 +158,7 @@ function doExport(format) {
   iframe.src = url
   document.body.appendChild(iframe)
   setTimeout(() => { if (iframe.parentNode) iframe.parentNode.removeChild(iframe) }, 60000)
-  showToast('已开始下载,请到钉钉文件中查看')
+  showToast('已下载,请到「我的 → 下载与收藏」中查看')
 }
 
 onMounted(loadData)
