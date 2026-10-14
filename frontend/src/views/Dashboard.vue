@@ -96,8 +96,7 @@ function drawStatus(tasks) {
 function drawAssignee(tasks) {
   const counts = {}
   tasks.forEach(t => {
-    // 后端 stats 没返回 assignee 对象,只有 assignee_id
-    const name = t.assignee_name || t.assignee_id?.slice(0, 8) || '未分配'
+    const name = t.assignee?.name || (t.assignee_id ? t.assignee_id.slice(0, 8) : '未分配')
     counts[name] = (counts[name] || 0) + 1
   })
   const chart = echarts.init(assigneeChart.value)

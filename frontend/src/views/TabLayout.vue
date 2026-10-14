@@ -56,9 +56,10 @@ function go(path) {
 }
 .nav-item {
   flex: 1; display: flex; flex-direction: column; align-items: center;
-  justify-content: center; gap: 2px; font-size: 11px; color: #969799;
-  cursor: pointer;
+  justify-content: center; gap: 3px; font-size: 11px; line-height: 1;
+  color: #969799; cursor: pointer;
 }
+.nav-item svg { display: block; }
 .nav-item.active { color: #4472C4; }
 .nav-item:active { opacity: 0.7; }
 </style>

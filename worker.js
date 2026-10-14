@@ -901,7 +901,7 @@ app.post('/api/tasks/:id/transition', requireUser, async (c) => {
     const userId = c.get('userId')
     const id = c.req.param('id')
     const body = await c.req.json()
-    const { to_status, comment } = body
+    const { to_status, comment, attachments } = body
 
     // 新的工作流状态流转规则
     const FLOW = {
@@ -980,6 +980,23 @@ app.post('/api/tasks/:id/transition', requireUser, async (c) => {
         comment: comment || null, operator_id: userId
       })
     })
+
+    // 本次流转附带的附件(拍照/文件)
+    if (Array.isArray(attachments) && attachments.length) {
+      for (const a of attachments) {
+        if (!a || !a.file_url) continue
+        try {
+          await adminFetch(c, 'task_attachments', {
+            method: 'POST',
+            body: JSON.stringify({
+              task_id: id, uploader_id: userId,
+              file_name: a.file_name || '附件', file_url: a.file_url,
+              file_size: a.file_size || 0, file_type: a.file_type || ''
+            })
+          })
+        } catch (e) {}
+      }
+    }
 
     // 发钉钉通知
     const updatedTask = Array.isArray(updated) ? updated[0] : updated
@@ -1108,6 +1125,58 @@ app.delete('/api/tasks/:id/attachments/:aid', requireUser, async (c) => {
     const aid = c.req.param('aid')
     await adminFetch(c, `task_attachments?id=eq.${aid}&task_id=eq.${id}`, { method: 'DELETE' })
     return c.json({ ok: true })
+  } catch (e) {
+    return c.json({ message: e.message }, 500)
+  }
+})
+
+// 上传文件(拍照/文件)到 Supabase Storage,返回可访问 URL
+app.post('/api/upload', requireUser, async (c) => {
+  try {
+    const SUPABASE_URL = env(c, 'SUPABASE_URL')
+    const KEY = env(c, 'SUPABASE_SERVICE_ROLE_KEY')
+    const BUCKET = 'task-files'
+
+    const form = await c.req.formData()
+    const file = form.get('file')
+    if (!file || typeof file === 'string') return c.json({ message: '未收到文件' }, 400)
+
+    // 确保 bucket 存在(公开可读);已存在会报错,忽略
+    try {
+      await fetch(`${SUPABASE_URL}/storage/v1/bucket`, {
+        method: 'POST',
+        headers: { apikey: KEY, authorization: `Bearer ${KEY}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ id: BUCKET, name: BUCKET, public: true })
+      })
+    } catch (e) {}
+
+    const orig = file.name || 'file'
+    const dot = orig.lastIndexOf('.')
+    const ext = dot > -1 ? orig.slice(dot).toLowerCase() : ''
+    const path = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`
+
+    const buf = await file.arrayBuffer()
+    const up = await fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}/${path}`, {
+      method: 'POST',
+      headers: {
+        apikey: KEY,
+        authorization: `Bearer ${KEY}`,
+        'content-type': file.type || 'application/octet-stream',
+        'x-upsert': 'true'
+      },
+      body: buf
+    })
+    if (!up.ok) {
+      const err = await up.json().catch(() => ({}))
+      return c.json({ message: err.message || '上传失败' }, 500)
+    }
+
+    return c.json({
+      file_url: `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${path}`,
+      file_name: orig,
+      file_size: buf.byteLength,
+      file_type: file.type || ''
+    })
   } catch (e) {
     return c.json({ message: e.message }, 500)
   }
@@ -1331,9 +1400,9 @@ app.get('/api/stats/export', requireUser, async (c) => {
 app.get('/api/stats', requireUser, async (c) => {
   try {
     const userId = c.get('userId')
-    const tasks = await adminFetch(c, `tasks?select=id,status,priority,assignee_id,creator_id,reviewer_id,due_date&or=(creator_id.eq.${userId},assignee_id.eq.${userId},reviewer_id.eq.${userId})`)
+    const tasks = await adminFetch(c, `tasks?select=id,status,priority,created_at,due_date,assignee_id,creator_id,reviewer_id,assignee:users!tasks_assignee_id_fkey(id,name)&or=(creator_id.eq.${userId},assignee_id.eq.${userId},reviewer_id.eq.${userId})`)
     const list = tasks || []
-    const stats = { total: list.length, draft: 0, pending_review: 0, in_progress: 0, done: 0, overdue: 0 }
+    const stats = { total: list.length, draft: 0, pending_review: 0, in_progress: 0, done: 0, overdue: 0, tasks: list }
     const now = new Date()
     for (const t of list) {
       if (stats[t.status] !== undefined) stats[t.status]++

@@ -95,9 +95,9 @@
     </van-cell-group>
 
     <van-cell-group inset title="附件">
-      <van-cell v-for="a in attachments" :key="a.id" :title="a.file_name" :label="formatFileSize(a.file_size)">
+      <van-cell v-for="a in attachments" :key="a.id" :title="a.file_name" :label="formatFileSize(a.file_size)" is-link @click="openAttachment(a)">
         <template #value>
-          <van-button v-if="canEdit" size="mini" type="danger" plain @click="onDeleteAttachment(a.id)">删除</van-button>
+          <van-button v-if="canEdit" size="mini" type="danger" plain @click.stop="onDeleteAttachment(a.id)">删除</van-button>
         </template>
       </van-cell>
       <van-cell v-if="!attachments.length" title="暂无附件" />
@@ -163,10 +163,28 @@
             class="custom-input"
             placeholder="可选:填写审批意见"
           />
+          <!-- 拍照 / 上传文件 -->
+          <div class="attach-row">
+            <label class="attach-btn">
+              拍照
+              <input type="file" accept="image/*" capture="environment" style="display:none" @change="onPickFile" />
+            </label>
+            <label class="attach-btn">
+              选择文件
+              <input type="file" style="display:none" @change="onPickFile" />
+            </label>
+            <span v-if="uploading" class="attach-tip">上传中…</span>
+          </div>
+          <div v-if="pendingAttachments.length" class="pending-list">
+            <div v-for="(f, i) in pendingAttachments" :key="i" class="pending-item">
+              <span class="pending-name">{{ f.file_name }}</span>
+              <span class="pending-del" @click="pendingAttachments.splice(i, 1)">删除</span>
+            </div>
+          </div>
         </div>
         <div class="custom-modal-actions">
           <button class="custom-modal-btn cancel" @click="showComment = false">取消</button>
-          <button class="custom-modal-btn confirm" @click="confirmTransition">确认</button>
+          <button class="custom-modal-btn confirm" :disabled="uploading" @click="confirmTransition">确认</button>
         </div>
       </div>
     </div>
@@ -206,7 +224,7 @@ import { useRoute, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import {
   fetchTask, transitionTask, deleteTask,
-  fetchAttachments, addAttachment, deleteAttachment,
+  fetchAttachments, addAttachment, deleteAttachment, uploadFile,
   fetchComments, addComment, deleteComment,
   STATUS_LABEL, STATUS_COLOR, PRIORITY_LABEL, PRIORITY_COLOR, TASK_TYPE_LABEL
 } from '../api/task'
@@ -220,6 +238,9 @@ const comment = ref('')
 const pendingTo = ref('')
 const successMsg = ref('')
 const errorMsg = ref('')
+// 流转时待提交的附件(先上传,确认时一并提交)
+const pendingAttachments = ref([])
+const uploading = ref(false)
 
 // 自定义确认弹窗（删除确认用）
 const confirmModal = reactive({
@@ -369,22 +390,46 @@ async function load() {
 function onTransition(to) {
   pendingTo.value = to
   comment.value = ''
+  pendingAttachments.value = []
   successMsg.value = ''
   errorMsg.value = ''
   showComment.value = true
 }
 
 async function confirmTransition() {
+  if (uploading.value) return
   showComment.value = false
   successMsg.value = ''
   errorMsg.value = ''
   try {
-    await transitionTask(task.value.id, task.value.status, pendingTo.value, comment.value)
+    await transitionTask(task.value.id, task.value.status, pendingTo.value, comment.value, pendingAttachments.value)
+    pendingAttachments.value = []
     await load()
     successMsg.value = '操作成功！任务状态已更新'
   } catch (e) {
     errorMsg.value = '操作失败：' + (e.message || '未知错误')
   }
+}
+
+// 拍照/选择文件后先上传
+async function onPickFile(e) {
+  const file = e.target.files && e.target.files[0]
+  e.target.value = ''
+  if (!file) return
+  uploading.value = true
+  errorMsg.value = ''
+  try {
+    const r = await uploadFile(file)
+    pendingAttachments.value.push(r)
+  } catch (err) {
+    errorMsg.value = '上传失败：' + (err.message || '')
+  } finally {
+    uploading.value = false
+  }
+}
+
+function openAttachment(a) {
+  if (a && a.file_url) window.open(a.file_url, '_blank')
 }
 
 function onDelete() {
@@ -497,6 +542,26 @@ onMounted(load)
   color: #323233;
   outline: none;
 }
+
+/* 流转附件上传 */
+.attach-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.attach-btn {
+  display: inline-block; padding: 6px 14px;
+  border: 1px solid #1989fa; color: #1989fa;
+  border-radius: 6px; font-size: 13px; cursor: pointer;
+}
+.attach-btn:active { opacity: 0.7; }
+.attach-tip { font-size: 12px; color: #969799; }
+.pending-list { margin-top: 10px; }
+.pending-item {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 13px; padding: 6px 0; border-bottom: 1px solid #f2f3f5;
+}
+.pending-name {
+  color: #323233; max-width: 70%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pending-del { color: #ee0a24; font-size: 12px; cursor: pointer; }
 
 .custom-input:focus {
   border-color: #1989fa;

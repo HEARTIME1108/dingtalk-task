@@ -154,14 +154,32 @@ export async function quickCompleteTask(id, comment) {
 // ============================================================
 // 审批流转
 // ============================================================
-export async function transitionTask(taskId, fromStatus, toStatus, comment) {
+export async function transitionTask(taskId, fromStatus, toStatus, comment, attachments) {
   if (!canTransition(fromStatus, toStatus)) {
     throw new Error(`不允许从「${STATUS_LABEL[fromStatus]}」流转到「${STATUS_LABEL[toStatus]}」`)
   }
   return apiCall(`/tasks/${taskId}/transition`, {
     method: 'POST',
-    body: JSON.stringify({ to_status: toStatus, comment })
+    body: JSON.stringify({ to_status: toStatus, comment, attachments: attachments || [] })
   })
+}
+
+// 上传文件(拍照/文件) → 返回 { file_url, file_name, file_size, file_type }
+export async function uploadFile(file) {
+  const token = getToken()
+  const fd = new FormData()
+  fd.append('file', file)
+  const res = await fetch(`${API_BASE}/upload`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: fd
+  })
+  if (!res.ok) {
+    let msg = `上传失败 ${res.status}`
+    try { msg = (await res.json()).message || msg } catch (_) {}
+    throw new Error(msg)
+  }
+  return res.json()
 }
 
 // ============================================================
