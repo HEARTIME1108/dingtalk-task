@@ -1416,6 +1416,7 @@ app.get('/api/stats/export', async (c) => {
     const stamp = new Date().toISOString().slice(0, 10)
     const format = (c.req.query('format') || 'csv').toLowerCase()
 
+    let buf, contentType, filename
     if (format === 'xls') {
       // 用 SheetJS 生成真正的 .xlsx 文件(钉钉/WPS/Excel 均可预览打开)
       const head = ['ID', '标题', '状态', '任务周期', '创建人', '负责人', '审批人', '截止日期', '创建时间']
@@ -1427,20 +1428,45 @@ app.get('/api/stats/export', async (c) => {
       const ws = XLSX.utils.aoa_to_sheet([head, ...data])
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, '任务清单')
-      const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' })
-      return new Response(buf, {
-        headers: {
-          'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          'Content-Disposition': `attachment; filename="tasks_${stamp}.xlsx"`
-        }
-      })
+      buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' })
+      contentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      filename = `tasks_${stamp}.xlsx`
+    } else {
+      const csv = '\ufeff' + header + '\n' + rows.join('\n')
+      buf = new TextEncoder().encode(csv).buffer
+      contentType = 'text/csv; charset=utf-8'
+      filename = `tasks_${stamp}.csv`
     }
 
-    const csv = '\ufeff' + header + '\n' + rows.join('\n')
-    return new Response(csv, {
+    // 上传到 Supabase 公开存储,返回可直接访问的 URL,方便钉钉内置浏览器打开/下载
+    try {
+      const SUPABASE_URL = env(c, 'SUPABASE_URL')
+      const KEY = env(c, 'SUPABASE_SERVICE_ROLE_KEY')
+      const BUCKET = 'task-files'
+      const path = `exports/${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${filename}`
+      const up = await fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}/${path}`, {
+        method: 'POST',
+        headers: {
+          apikey: KEY,
+          authorization: `Bearer ${KEY}`,
+          'content-type': contentType,
+          'x-upsert': 'true'
+        },
+        body: buf
+      })
+      if (up.ok) {
+        const url = `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${path}`
+        return c.json({ url, filename })
+      }
+    } catch (e) {
+      // 上传失败,回退到直接返回文件流
+    }
+
+    // 回退:直接返回文件流
+    return new Response(buf, {
       headers: {
-        'Content-Type': 'text/csv; charset=utf-8',
-        'Content-Disposition': `attachment; filename="tasks_${stamp}.csv"`
+        'Content-Type': contentType,
+        'Content-Disposition': `attachment; filename="${filename}"`
       }
     })
   } catch (e) {

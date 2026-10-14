@@ -147,18 +147,36 @@ function onExport() {
   showExport.value = true
 }
 
-// 用隐藏 iframe 触发下载,避免 window.open 把文件内容当文本弹出来
-function doExport(format) {
+// 导出:请求后端生成文件并上传到公开存储,拿到 URL 后直接在钉钉内置浏览器打开
+async function doExport(format) {
   showExport.value = false
   const token = getToken()
   if (!token) { showToast('请先登录'); return }
-  const url = `${API_BASE}/stats/export?format=${format}&token=${encodeURIComponent(token)}`
-  const iframe = document.createElement('iframe')
-  iframe.style.display = 'none'
-  iframe.src = url
-  document.body.appendChild(iframe)
-  setTimeout(() => { if (iframe.parentNode) iframe.parentNode.removeChild(iframe) }, 60000)
-  showToast('已下载,请到「我的 → 下载与收藏」中查看')
+  showToast({ message: '正在生成文件...', type: 'loading', duration: 0 })
+  try {
+    const res = await fetch(`${API_BASE}/stats/export?format=${format}&token=${encodeURIComponent(token)}`)
+    const ct = res.headers.get('content-type') || ''
+    if (ct.includes('application/json')) {
+      const data = await res.json()
+      if (data.url) {
+        // 直接在当前 WebView 打开文件 URL,钉钉会提示下载或用其他应用打开
+        window.location.href = data.url
+        showToast({ message: '文件已生成,正在打开...', duration: 2000 })
+        return
+      }
+      throw new Error(data.message || '导出失败')
+    }
+    // 回退:后端直接返回了文件流,用隐藏 iframe 下载
+    const url = `${API_BASE}/stats/export?format=${format}&token=${encodeURIComponent(token)}`
+    const iframe = document.createElement('iframe')
+    iframe.style.display = 'none'
+    iframe.src = url
+    document.body.appendChild(iframe)
+    setTimeout(() => { if (iframe.parentNode) iframe.parentNode.removeChild(iframe) }, 60000)
+    showToast({ message: '文件已下载,请在「文件」App 中查看', duration: 3000 })
+  } catch (e) {
+    showToast({ message: e.message || '导出失败', duration: 3000 })
+  }
 }
 
 onMounted(loadData)
