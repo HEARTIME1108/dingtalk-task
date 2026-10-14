@@ -1,8 +1,8 @@
 <template>
   <div class="page">
-    <van-nav-bar title="统计报表" left-arrow @click-left="$router.back()" fixed placeholder>
+    <van-nav-bar title="统计报表" fixed placeholder>
       <template #right>
-        <van-icon name="down" size="20" @click="onExport" />
+        <span class="export-btn" @click="onExport">导出</span>
       </template>
     </van-nav-bar>
 
@@ -144,6 +144,7 @@ onMounted(loadData)
 </script>
 
 <style scoped>
-.page { min-height: 100vh; background: #f7f8fa; padding-bottom: 20px; }
+.page { min-height: 100vh; background: #f7f8fa; padding-bottom: 80px; }
 .chart { width: 100%; height: 240px; }
+.export-btn { color: #1989fa; font-size: 14px; }
 </style>

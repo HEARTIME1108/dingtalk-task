@@ -4,6 +4,12 @@
     <div class="header-bar">
       <div class="header-top-row">
         <div class="header-title">任务管理</div>
+        <div class="header-export" @click="exportTasks">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/>
+          </svg>
+          <span>导出</span>
+        </div>
       </div>
 
       <!-- 统计卡片 -->
@@ -145,29 +151,6 @@
         <button class="batch-btn complete" @click="batchComplete" :disabled="selectedIds.length === 0">批量完成</button>
         <button class="batch-btn delete" @click="batchDelete" :disabled="selectedIds.length === 0">批量删除</button>
         <button class="batch-btn cancel" @click="exitSelectMode">取消</button>
-      </div>
-    </div>
-
-    <!-- 底部导航 -->
-    <div v-if="!selectMode" class="bottom-nav">
-      <div class="nav-item active">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>
-        </svg>
-        <span>任务</span>
-      </div>
-      <div class="nav-item" @click="$router.push('/dashboard')">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M3 3v18h18"/><path d="M7 12l4-4 4 4 6-6"/>
-        </svg>
-        <span>统计</span>
-      </div>
-      <div class="nav-item" @click="$router.push('/settings')">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-        </svg>
-        <span>设置</span>
       </div>
     </div>
 
@@ -485,6 +468,38 @@ async function doQuickAction(t, act) {
   }
 }
 
+// 导出当前列表为 CSV
+function csvCell(v) { return `"${String(v ?? '').replace(/"/g, '""')}"` }
+function exportTasks() {
+  const rows = displayTasks.value
+  if (!rows.length) { showToast('没有可导出的任务'); return }
+  const header = ['标题', '状态', '任务类型', '任务周期', '负责人', '审批人', '截止日期', '创建人', '创建时间']
+  const lines = [header.join(',')]
+  for (const t of rows) {
+    lines.push([
+      csvCell(t.title),
+      STATUS_LABEL[t.status] || t.status || '',
+      TASK_TYPE_LABEL[t.task_type] || '',
+      PRIORITY_LABEL[t.priority] || '',
+      csvCell(t.assignee?.name || ''),
+      csvCell(t.reviewer?.name || ''),
+      t.due_date || '',
+      csvCell(t.creator?.name || ''),
+      t.created_at ? new Date(t.created_at).toLocaleString('zh-CN') : ''
+    ].join(','))
+  }
+  const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `任务清单_${new Date().toISOString().slice(0, 10)}.csv`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+  showToast('已导出当前列表')
+}
+
 function enterSelectMode(task) {
   selectMode.value = true
   selectedIds.value = [task.id]
@@ -614,8 +629,14 @@ watch(() => route.path, (newPath) => {
   background: linear-gradient(135deg, #4472C4, #5b8def);
   padding: 40px 16px 16px;
 }
-.header-top-row { margin-bottom: 14px; text-align: center; }
-.header-title { color: #fff; font-size: 18px; font-weight: 700; }
+.header-top-row { position: relative; margin-bottom: 14px; height: 26px; }
+.header-title { position: absolute; left: 50%; transform: translateX(-50%); color: #fff; font-size: 18px; font-weight: 700; }
+.header-export {
+  position: absolute; right: 0; top: 1px;
+  display: flex; align-items: center; gap: 4px;
+  color: #fff; font-size: 13px; opacity: 0.95; cursor: pointer;
+}
+.header-export:active { opacity: 0.7; }
 
 /* 统计卡片 */
 .stat-row {
@@ -816,23 +837,6 @@ watch(() => route.path, (newPath) => {
   transition: transform 0.15s;
 }
 .fab:active { transform: scale(0.9); }
-
-/* 底部导航 */
-.bottom-nav {
-  position: fixed; left: 0; right: 0; bottom: 0;
-  height: 60px; background: #fff;
-  display: flex; align-items: center;
-  border-top: 1px solid #ebedf0;
-  box-shadow: 0 -1px 6px rgba(0,0,0,0.04);
-  z-index: 60; padding-bottom: env(safe-area-inset-bottom);
-}
-.nav-item {
-  flex: 1; display: flex; flex-direction: column; align-items: center;
-  justify-content: center; gap: 2px; font-size: 11px; color: #969799;
-  cursor: pointer;
-}
-.nav-item.active { color: #4472C4; }
-.nav-item:active { opacity: 0.7; }
 
 /* 批量操作栏 */
 .batch-bar {

@@ -1,7 +1,6 @@
 <template>
   <div class="page">
     <div class="header-bar">
-      <div class="header-back" @click="$router.back()">←</div>
       <div class="header-title">分类设置</div>
     </div>
 
@@ -174,7 +173,7 @@ onMounted(load)
 </script>
 
 <style scoped>
-.page { min-height: 100vh; background: #f7f8fa; }
+.page { min-height: 100vh; background: #f7f8fa; padding-bottom: 80px; }
 
 /* 蓝色渐变头部 */
 .header-bar {
@@ -183,7 +182,6 @@ onMounted(load)
   display: flex; align-items: center; gap: 12px;
   position: sticky; top: 0; z-index: 100;
 }
-.header-back { color: #fff; font-size: 22px; cursor: pointer; }
 .header-title { color: #fff; font-size: 18px; font-weight: 600; }
 
 .content { padding: 12px; }
