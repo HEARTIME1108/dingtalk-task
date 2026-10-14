@@ -4,20 +4,6 @@
     <div class="header-bar">
       <div class="header-top-row">
         <div class="header-title">任务管理</div>
-        <div class="header-spacer"></div>
-        <div class="header-actions">
-          <div class="header-btn" @click="$router.push('/settings')">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="3"/>
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-            </svg>
-          </div>
-          <div class="header-btn" @click="$router.push('/dashboard')">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 3v18h18"/><path d="M7 12l4-4 4 4 6-6"/>
-            </svg>
-          </div>
-        </div>
       </div>
 
       <!-- 统计卡片 -->
@@ -81,10 +67,17 @@
     <div class="task-list">
       <div v-for="t in displayTasks" :key="t.id">
         <div v-if="showHeaderBefore(t)" class="group-header">{{ groupKeyOf(t) }}<span class="group-count">{{ groupCountMap[groupKeyOf(t)] || 0 }}</span></div>
+        <div class="card-wrap">
+        <div class="swipe-actions" :style="{ width: revealW(t) + 'px' }">
+          <button v-for="act in quickActions(t)" :key="act.to"
+            class="swipe-btn" :style="{ background: act.color }"
+            @click.stop="doQuickAction(t, act)">{{ act.label }}</button>
+        </div>
         <div class="task-card"
           :class="{ selected: selectedIds.includes(t.id), selectMode }"
+          :style="{ transform: cardTransform(t) }"
           @click="onTaskClick(t)"
-          @touchstart="onTouchStart(t)" @touchend="onTouchEnd" @touchmove="onTouchEnd"
+          @touchstart="onCardTouchStart($event, t)" @touchmove="onCardTouchMove($event, t)" @touchend="onCardTouchEnd($event, t)"
         >
         <div class="task-top">
           <div class="task-tags">
@@ -126,6 +119,7 @@
           <span v-if="t.due_date" class="task-due">截止 {{ t.due_date }}</span>
         </div>
         </div>
+        </div>
       </div>
       <div v-if="!loading && tasks.length === 0" class="empty-state">
         <div class="empty-icon">📋</div>
@@ -154,6 +148,29 @@
       </div>
     </div>
 
+    <!-- 底部导航 -->
+    <div v-if="!selectMode" class="bottom-nav">
+      <div class="nav-item active">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>
+        </svg>
+        <span>任务</span>
+      </div>
+      <div class="nav-item" @click="$router.push('/dashboard')">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 3v18h18"/><path d="M7 12l4-4 4 4 6-6"/>
+        </svg>
+        <span>统计</span>
+      </div>
+      <div class="nav-item" @click="$router.push('/settings')">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+        <span>设置</span>
+      </div>
+    </div>
+
     <!-- Toast -->
     <div v-if="toast.show" class="toast">{{ toast.msg }}</div>
 
@@ -175,9 +192,10 @@
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  fetchTasks, fetchTaskCounts, fetchTags, deleteTask, quickCompleteTask,
+  fetchTasks, fetchTaskCounts, fetchTags, deleteTask, quickCompleteTask, transitionTask,
   STATUS_LABEL, STATUS_COLOR, PRIORITY_LABEL, PRIORITY_COLOR, TASK_TYPE_LABEL
 } from '../api/task'
+import { userStore, loadUser } from '../stores/user'
 
 const route = useRoute()
 const router = useRouter()
@@ -326,6 +344,7 @@ async function loadCounts() {
 async function load() {
   loading.value = true
   errorMsg.value = ''
+  swipeOpenId.value = null
   try {
     let list = await fetchTasks({ status: active.value, keyword: keyword.value })
     const tc = {}
@@ -350,21 +369,119 @@ async function load() {
   }
 }
 
-// 长按进入选择模式
-function onTouchStart(task) {
+// ============ 左滑快捷操作 + 长按进入选择模式 ============
+const REVEAL_UNIT = 76
+const swipeOpenId = ref(null)   // 当前展开的卡片 id
+const dragId = ref(null)        // 正在拖动的卡片 id
+const dragX = ref(0)            // 拖动位移(px,<=0)
+const dragging = ref(false)     // 是否已判定为横向拖动
+let startX = 0
+let startY = 0
+let suppressClick = false
+
+// 当前用户在该任务上可执行的"下一步"操作
+function quickActions(t) {
+  const me = userStore.user?.id
+  const admin = !!userStore.profile?.is_admin
+  const acts = []
+  if (t.status === 'todo' && (t.assignee_id === me || admin)) {
+    acts.push({ label: '开始执行', to: 'in_progress', color: '#1989fa' })
+  }
+  if (t.status === 'in_progress' && (t.assignee_id === me || admin)) {
+    acts.push({ label: '提交审核', to: 'pending_review', color: '#1989fa' })
+  }
+  if (t.status === 'pending_review' && (t.reviewer_id === me || admin)) {
+    acts.push({ label: '通过', to: 'done', color: '#07c160' })
+    acts.push({ label: '驳回', to: 'rejected', color: '#ee0a24' })
+  }
+  if (t.status === 'rejected' && (t.assignee_id === me || admin)) {
+    acts.push({ label: '重新执行', to: 'in_progress', color: '#1989fa' })
+  }
+  if (t.status === 'done' && t.task_type === 'department' && (t.department_head_id === me || admin)) {
+    acts.push({ label: '关闭', to: 'closed', color: '#969799' })
+  }
+  if (t.status === 'done' && t.task_type === 'team' && (t.creator_id === me || admin)) {
+    acts.push({ label: '关闭', to: 'closed', color: '#969799' })
+  }
+  return acts
+}
+
+function revealW(t) { return quickActions(t).length * REVEAL_UNIT }
+
+function cardTransform(t) {
+  if (dragId.value === t.id && dragging.value) return `translateX(${dragX.value}px)`
+  if (swipeOpenId.value === t.id) return `translateX(-${revealW(t)}px)`
+  return 'translateX(0)'
+}
+
+function closeSwipe() { swipeOpenId.value = null }
+
+function clearLongPress() {
+  if (longPressTimer.value) { clearTimeout(longPressTimer.value); longPressTimer.value = null }
+}
+
+function onCardTouchStart(e, t) {
+  if (selectMode.value) return
+  const p = e.touches[0]
+  startX = p.clientX
+  startY = p.clientY
+  dragId.value = t.id
+  dragging.value = false
+  dragX.value = 0
   longPressTriggered.value = false
   longPressTimer.value = setTimeout(() => {
-    if (!longPressTriggered.value) {
+    if (!longPressTriggered.value && !dragging.value) {
       longPressTriggered.value = true
-      enterSelectMode(task)
+      closeSwipe()
+      enterSelectMode(t)
     }
   }, 500)
 }
 
-function onTouchEnd() {
-  if (longPressTimer.value) {
-    clearTimeout(longPressTimer.value)
-    longPressTimer.value = null
+function onCardTouchMove(e, t) {
+  if (selectMode.value || dragId.value !== t.id) return
+  const p = e.touches[0]
+  const dx = p.clientX - startX
+  const dy = p.clientY - startY
+  if (!dragging.value) {
+    if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) + 2) {
+      dragging.value = true
+      clearLongPress()
+    } else {
+      return
+    }
+  }
+  const max = revealW(t)
+  if (max <= 0) { dragging.value = false; return }
+  let x = swipeOpenId.value === t.id ? dx - max : dx
+  if (x > 0) x = 0
+  if (x < -max) x = -max
+  dragX.value = x
+}
+
+function onCardTouchEnd(e, t) {
+  clearLongPress()
+  if (dragId.value !== t.id) return
+  if (!selectMode.value && dragging.value) {
+    const max = revealW(t)
+    swipeOpenId.value = (max > 0 && dragX.value <= -max * 0.4) ? t.id : null
+    suppressClick = true
+    setTimeout(() => { suppressClick = false }, 300)
+  }
+  dragId.value = null
+  dragging.value = false
+  dragX.value = 0
+}
+
+// 快捷流转到下一流程
+async function doQuickAction(t, act) {
+  closeSwipe()
+  try {
+    await transitionTask(t.id, t.status, act.to, `${act.label}(列表快捷)`)
+    showToast(`已${act.label}`)
+    await load()
+  } catch (e) {
+    showToast(e.message || '操作失败')
   }
 }
 
@@ -380,8 +497,17 @@ function exitSelectMode() {
 }
 
 function onTaskClick(task) {
+  if (suppressClick) {
+    suppressClick = false
+    return
+  }
   if (longPressTriggered.value) {
     longPressTriggered.value = false
+    return
+  }
+  // 有卡片处于展开状态时,点击只收起
+  if (swipeOpenId.value) {
+    swipeOpenId.value = null
     return
   }
   if (selectMode.value) {
@@ -468,6 +594,10 @@ onMounted(async () => {
   try {
     allTags.value = await fetchTags()
   } catch (e) {}
+  // 加载当前用户(用于左滑快捷操作的角色判断)
+  if (!userStore.user) {
+    try { await loadUser() } catch (e) {}
+  }
   await load()
 })
 
@@ -477,22 +607,15 @@ watch(() => route.path, (newPath) => {
 </script>
 
 <style scoped>
-.page { min-height: 100vh; background: #f7f8fa; padding-bottom: 80px; }
+.page { min-height: 100vh; background: #f7f8fa; padding-bottom: 140px; }
 
 /* 蓝色渐变头部 */
 .header-bar {
   background: linear-gradient(135deg, #4472C4, #5b8def);
   padding: 40px 16px 16px;
 }
-.header-top-row {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 14px; position: relative;
-}
-.header-title { color: #fff; font-size: 18px; font-weight: 700; position: absolute; left: 50%; transform: translateX(-50%); }
-.header-spacer { width: 56px; }
-.header-actions { display: flex; gap: 10px; }
-.header-btn { color: #fff; cursor: pointer; opacity: 0.9; }
-.header-btn:active { opacity: 1; }
+.header-top-row { margin-bottom: 14px; text-align: center; }
+.header-title { color: #fff; font-size: 18px; font-weight: 700; }
 
 /* 统计卡片 */
 .stat-row {
@@ -569,13 +692,26 @@ watch(() => route.path, (newPath) => {
 
 /* 任务列表 */
 .task-list { padding: 4px 12px; }
-.task-card {
-  background: #fff; border-radius: 10px; padding: 14px;
-  margin-bottom: 8px;
+.card-wrap {
+  position: relative; overflow: hidden; border-radius: 10px;
+  margin-bottom: 8px; background: #fff;
   box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-  cursor: pointer; transition: all 0.15s;
 }
-.task-card:active { transform: scale(0.98); }
+.swipe-actions {
+  position: absolute; top: 0; right: 0; bottom: 0;
+  display: flex; align-items: stretch;
+}
+.swipe-btn {
+  flex: 1; min-width: 0; border: none; color: #fff; font-size: 13px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; padding: 0; white-space: nowrap;
+}
+.task-card {
+  position: relative; z-index: 1;
+  background: #fff; border-radius: 10px; padding: 14px;
+  cursor: pointer; transition: transform 0.2s ease;
+  touch-action: pan-y;
+}
 .task-card.selectMode { padding-left: 8px; }
 .task-card.selected {
   background: #f0f6ff;
@@ -671,7 +807,7 @@ watch(() => route.path, (newPath) => {
 
 /* 浮动按钮 */
 .fab {
-  position: fixed; right: 20px; bottom: 24px;
+  position: fixed; right: 20px; bottom: 84px;
   width: 52px; height: 52px; border-radius: 50%;
   background: linear-gradient(135deg, #4472C4, #5b8def);
   display: flex; align-items: center; justify-content: center;
@@ -680,6 +816,23 @@ watch(() => route.path, (newPath) => {
   transition: transform 0.15s;
 }
 .fab:active { transform: scale(0.9); }
+
+/* 底部导航 */
+.bottom-nav {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  height: 60px; background: #fff;
+  display: flex; align-items: center;
+  border-top: 1px solid #ebedf0;
+  box-shadow: 0 -1px 6px rgba(0,0,0,0.04);
+  z-index: 60; padding-bottom: env(safe-area-inset-bottom);
+}
+.nav-item {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 2px; font-size: 11px; color: #969799;
+  cursor: pointer;
+}
+.nav-item.active { color: #4472C4; }
+.nav-item:active { opacity: 0.7; }
 
 /* 批量操作栏 */
 .batch-bar {
