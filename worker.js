@@ -9,6 +9,7 @@ if (typeof globalThis.process === 'undefined') {
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { notifyTask } from './backend/notifier.js'
+import * as XLSX from 'xlsx'
 
 const app = new Hono()
 
@@ -1416,22 +1417,21 @@ app.get('/api/stats/export', async (c) => {
     const format = (c.req.query('format') || 'csv').toLowerCase()
 
     if (format === 'xls') {
-      // 用 HTML 表格生成 .xls,Excel/WPS 可直接打开,无需额外依赖
-      const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      // 用 SheetJS 生成真正的 .xlsx 文件(钉钉/WPS/Excel 均可预览打开)
       const head = ['ID', '标题', '状态', '任务周期', '创建人', '负责人', '审批人', '截止日期', '创建时间']
-      const body = list.map(t => {
-        const cells = [
-          t.id, t.title || '', STATUS_LABELS[t.status] || t.status, PRIORITY_LABELS[t.priority] || (t.priority || ''),
-          t.creator?.name || '-', t.assignee?.name || '-', t.reviewer?.name || '-',
-          t.due_date || '-', t.created_at ? new Date(t.created_at).toLocaleString('zh-CN') : '-'
-        ]
-        return '<tr>' + cells.map(v => `<td>${esc(v)}</td>`).join('') + '</tr>'
-      }).join('')
-      const html = `<html><head><meta charset="utf-8"></head><body><table border="1"><tr>${head.map(h => `<td><b>${h}</b></td>`).join('')}</tr>${body}</table></body></html>`
-      return new Response('\ufeff' + html, {
+      const data = list.map(t => [
+        t.id, t.title || '', STATUS_LABELS[t.status] || t.status, PRIORITY_LABELS[t.priority] || (t.priority || ''),
+        t.creator?.name || '-', t.assignee?.name || '-', t.reviewer?.name || '-',
+        t.due_date || '-', t.created_at ? new Date(t.created_at).toLocaleString('zh-CN') : '-'
+      ])
+      const ws = XLSX.utils.aoa_to_sheet([head, ...data])
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, '任务清单')
+      const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' })
+      return new Response(buf, {
         headers: {
-          'Content-Type': 'application/vnd.ms-excel; charset=utf-8',
-          'Content-Disposition': `attachment; filename="tasks_${stamp}.xls"`
+          'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'Content-Disposition': `attachment; filename="tasks_${stamp}.xlsx"`
         }
       })
     }

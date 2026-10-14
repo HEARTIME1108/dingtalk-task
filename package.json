@@ -21,7 +21,8 @@
     "pg": "^8.23.1",
     "vant": "^4.8.3",
     "vue": "^3.4.21",
-    "vue-router": "^4.3.0"
+    "vue-router": "^4.3.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@vant/auto-import-resolver": "^1.2.1",

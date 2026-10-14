@@ -29,8 +29,8 @@
       <div class="exp-modal" @click.stop>
         <div class="exp-title">导出任务清单</div>
         <div class="exp-opt" @click="doExport('xls')">
-          <div class="exp-opt-name">Excel 表格（.xls）</div>
-          <div class="exp-opt-desc">可直接用 Excel / WPS 打开</div>
+          <div class="exp-opt-name">Excel 表格（.xlsx）</div>
+          <div class="exp-opt-desc">钉钉、WPS、Excel 均可直接预览打开</div>
         </div>
         <div class="exp-opt" @click="doExport('csv')">
           <div class="exp-opt-name">CSV 文件（.csv）</div>
