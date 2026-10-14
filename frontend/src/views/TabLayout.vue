@@ -48,11 +48,11 @@ function go(path) {
 
 .bottom-nav {
   position: fixed; left: 0; right: 0; bottom: 0;
-  height: 60px; background: #fff;
+  min-height: 60px; background: #fff;
   display: flex; align-items: center;
   border-top: 1px solid #ebedf0;
-  box-shadow: 0 -1px 6px rgba(0,0,0,0.04);
-  z-index: 60; padding-bottom: env(safe-area-inset-bottom);
+  box-shadow: 0 -1px 6px rgba(0,0,0,0.06);
+  z-index: 999; padding-bottom: env(safe-area-inset-bottom);
 }
 .nav-item {
   flex: 1; display: flex; flex-direction: column; align-items: center;

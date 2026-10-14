@@ -23,6 +23,22 @@
     <van-cell-group inset title="近 7 天创建趋势">
       <div ref="trendChart" class="chart" />
     </van-cell-group>
+
+    <!-- 导出格式选择 -->
+    <div v-if="showExport" class="exp-overlay" @click="showExport = false">
+      <div class="exp-modal" @click.stop>
+        <div class="exp-title">导出任务清单</div>
+        <div class="exp-opt" @click="doExport('xls')">
+          <div class="exp-opt-name">Excel 表格（.xls）</div>
+          <div class="exp-opt-desc">可直接用 Excel / WPS 打开</div>
+        </div>
+        <div class="exp-opt" @click="doExport('csv')">
+          <div class="exp-opt-name">CSV 文件（.csv）</div>
+          <div class="exp-opt-desc">通用格式，多数软件可导入</div>
+        </div>
+        <div class="exp-cancel" @click="showExport = false">取消</div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -35,7 +51,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 
 echarts.use([PieChart, BarChart, LineChart, TitleComponent, TooltipComponent, GridComponent, LegendComponent, CanvasRenderer])
 import { showToast } from 'vant'
-import { STATUS_LABEL, exportStats } from '../api/task'
+import { STATUS_LABEL } from '../api/task'
 
 const statusChart = ref()
 const assigneeChart = ref()
@@ -125,25 +141,49 @@ function drawTrend(tasks) {
   })
 }
 
-async function onExport() {
-  try {
-    const blob = await exportStats()
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `tasks_${new Date().toISOString().slice(0,10)}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
-  } catch (e) {
-    showToast(e.message || '导出失败')
-  }
+const showExport = ref(false)
+
+function onExport() {
+  showExport.value = true
+}
+
+// 直接打开后端下载链接 → 交给钉钉内置浏览器下载/打开(可再"发送到外部应用")
+function doExport(format) {
+  showExport.value = false
+  const token = getToken()
+  if (!token) { showToast('请先登录'); return }
+  const url = `${API_BASE}/stats/export?format=${format}&token=${encodeURIComponent(token)}`
+  window.open(url, '_blank')
 }
 
 onMounted(loadData)
 </script>
 
 <style scoped>
-.page { min-height: 100vh; background: #f7f8fa; padding-bottom: 80px; }
+.page { min-height: 100vh; background: #f7f8fa; padding-bottom: calc(90px + env(safe-area-inset-bottom)); }
 .chart { width: 100%; height: 240px; }
 .export-btn { color: #1989fa; font-size: 14px; }
+
+/* 导出格式选择弹窗 */
+.exp-overlay {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.45); z-index: 1000;
+  display: flex; align-items: flex-end;
+}
+.exp-modal {
+  width: 100%; background: #fff;
+  border-radius: 14px 14px 0 0; padding: 8px 0 env(safe-area-inset-bottom);
+}
+.exp-title {
+  font-size: 15px; font-weight: 600; color: #323233;
+  text-align: center; padding: 14px 0 8px;
+}
+.exp-opt { padding: 14px 20px; border-top: 1px solid #f2f3f5; cursor: pointer; }
+.exp-opt:active { background: #f7f8fa; }
+.exp-opt-name { font-size: 15px; color: #323233; }
+.exp-opt-desc { font-size: 12px; color: #969799; margin-top: 3px; }
+.exp-cancel {
+  text-align: center; padding: 14px 0; margin-top: 8px;
+  font-size: 15px; color: #969799; border-top: 8px solid #f7f8fa; cursor: pointer;
+}
 </style>

@@ -173,6 +173,23 @@ async function notifyTaskEvent(c, task, event, operatorId, operatorName, extraUs
     const base = env(c, 'FRONTEND_BASE_URL', '').replace(/\/$/, '')
     const taskUrl = base ? `${base}/tasks/${task.id}` : ''
 
+    // 优先级转中文(日/周/月...)
+    const PRIORITY_CN = { daily: '日任务', weekly: '周任务', monthly: '月任务', quarterly: '季度任务', yearly: '年任务' }
+    const prioText = task.priority ? (PRIORITY_CN[task.priority] || task.priority) : '普通'
+    const dueText = task.due_date || '无'
+
+    // 取负责人/审核人姓名:让负责人知道"做什么任务、交给谁审核"
+    const nameOf = {}
+    try {
+      const ids = [task.assignee_id, task.reviewer_id, task.department_head_id].filter(Boolean)
+      if (ids.length) {
+        const us = await adminFetch(c, `users?select=id,name&id=in.(${ids.join(',')})`)
+        for (const u of (us || [])) nameOf[u.id] = u.name
+      }
+    } catch (e) {}
+    const assigneeName = nameOf[task.assignee_id] || '—'
+    const reviewerName = nameOf[task.reviewer_id] || '—'
+
     let targetIds = []
     let title = ''
     let markdown = ''
@@ -180,19 +197,19 @@ async function notifyTaskEvent(c, task, event, operatorId, operatorName, extraUs
       // 创建任务时:负责人、审核人、协作者、部门主任 全部通知
       targetIds = [task.assignee_id, task.reviewer_id, task.department_head_id, ...extraUserIds]
       title = '新任务派发'
-      markdown = `**${operatorName}** 派发了任务\n\n**任务**：${task.title}\n**优先级**：${task.priority || '普通'}\n**截止**：${task.due_date || '无'}\n\n请及时处理。`
+      markdown = `**${operatorName}** 派发了任务\n\n**任务**：${task.title}\n**优先级**：${prioText}\n**负责人**：${assigneeName}\n**审核人**：${reviewerName}\n**截止**：${dueText}\n\n请及时处理。`
     } else if (event === 'review') {
       targetIds = [task.reviewer_id]
       title = '有任务待审核'
-      markdown = `**${operatorName}** 提交了任务待你审核\n\n**任务**：${task.title}\n\n请尽快审批。`
+      markdown = `**${operatorName}** 提交了任务待你审核\n\n**任务**：${task.title}\n**负责人**：${assigneeName}\n**优先级**：${prioText}\n**截止**：${dueText}\n\n请尽快审批。`
     } else if (event === 'approve') {
       targetIds = [task.assignee_id, task.creator_id]
       title = '任务审批通过'
-      markdown = `**${operatorName}** 通过了任务\n\n**任务**：${task.title}`
+      markdown = `**${operatorName}** 通过了任务\n\n**任务**：${task.title}\n**负责人**：${assigneeName}\n**截止**：${dueText}`
     } else if (event === 'reject') {
       targetIds = [task.assignee_id]
       title = '任务被驳回'
-      markdown = `**${operatorName}** 驳回了任务，请重新执行\n\n**任务**：${task.title}`
+      markdown = `**${operatorName}** 驳回了任务，请重新执行\n\n**任务**：${task.title}\n**优先级**：${prioText}\n**截止**：${dueText}`
     } else if (event === 'close' || event === 'complete') {
       targetIds = [task.creator_id]
       title = event === 'close' ? '任务已关闭' : '任务已完成'
@@ -1348,8 +1365,19 @@ app.get('/api/tasks/:id/subtasks', requireUser, async (c) => {
   }
 })
 
-// 统计导出 CSV
-app.get('/api/stats/export', requireUser, async (c) => {
+// 统计导出 CSV/Excel(支持 ?token= 便于前端用 window.open 直接下载)
+app.get('/api/stats/export', async (c) => {
+  // 下载链接无法携带请求头,优先从查询参数取 token,否则用 Authorization
+  const qToken = c.req.query('token')
+  let token = qToken
+  if (!token) {
+    const auth = c.req.header('Authorization') || ''
+    const m = auth.match(/^Bearer\s+(.+)$/i)
+    token = m ? m[1] : ''
+  }
+  const payload = token ? decodeJwtPayload(token) : null
+  if (!payload || !payload.sub) return c.json({ message: '未登录' }, 401)
+  c.set('userId', payload.sub)
   try {
     const userId = c.get('userId')
     // 查管理员
@@ -1384,11 +1412,35 @@ app.get('/api/stats/export', requireUser, async (c) => {
       t.created_at ? new Date(t.created_at).toLocaleString('zh-CN') : '-'
     ].join(','))
 
+    const stamp = new Date().toISOString().slice(0, 10)
+    const format = (c.req.query('format') || 'csv').toLowerCase()
+
+    if (format === 'xls') {
+      // 用 HTML 表格生成 .xls,Excel/WPS 可直接打开,无需额外依赖
+      const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      const head = ['ID', '标题', '状态', '任务周期', '创建人', '负责人', '审批人', '截止日期', '创建时间']
+      const body = list.map(t => {
+        const cells = [
+          t.id, t.title || '', STATUS_LABELS[t.status] || t.status, PRIORITY_LABELS[t.priority] || (t.priority || ''),
+          t.creator?.name || '-', t.assignee?.name || '-', t.reviewer?.name || '-',
+          t.due_date || '-', t.created_at ? new Date(t.created_at).toLocaleString('zh-CN') : '-'
+        ]
+        return '<tr>' + cells.map(v => `<td>${esc(v)}</td>`).join('') + '</tr>'
+      }).join('')
+      const html = `<html><head><meta charset="utf-8"></head><body><table border="1"><tr>${head.map(h => `<td><b>${h}</b></td>`).join('')}</tr>${body}</table></body></html>`
+      return new Response('\ufeff' + html, {
+        headers: {
+          'Content-Type': 'application/vnd.ms-excel; charset=utf-8',
+          'Content-Disposition': `attachment; filename="tasks_${stamp}.xls"`
+        }
+      })
+    }
+
     const csv = '\ufeff' + header + '\n' + rows.join('\n')
     return new Response(csv, {
       headers: {
         'Content-Type': 'text/csv; charset=utf-8',
-        'Content-Disposition': `attachment; filename="tasks_${new Date().toISOString().slice(0,10)}.csv"`
+        'Content-Disposition': `attachment; filename="tasks_${stamp}.csv"`
       }
     })
   } catch (e) {

@@ -173,7 +173,7 @@ onMounted(load)
 </script>
 
 <style scoped>
-.page { min-height: 100vh; background: #f7f8fa; padding-bottom: 80px; }
+.page { min-height: 100vh; background: #f7f8fa; padding-bottom: calc(90px + env(safe-area-inset-bottom)); }
 
 /* 蓝色渐变头部 */
 .header-bar {

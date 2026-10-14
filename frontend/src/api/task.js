@@ -252,15 +252,3 @@ export async function deleteTag(id) {
 export async function fetchSubtasks(taskId) {
   return apiCall(`/tasks/${taskId}/subtasks`)
 }
-
-// ============================================================
-// 统计导出
-// ============================================================
-export async function exportStats() {
-  const token = getToken()
-  const res = await fetch(`${API_BASE}/stats/export`, {
-    headers: { 'Authorization': `Bearer ${token}` }
-  })
-  if (!res.ok) throw new Error('导出失败')
-  return res.blob()
-}

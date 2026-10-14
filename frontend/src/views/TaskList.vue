@@ -4,12 +4,6 @@
     <div class="header-bar">
       <div class="header-top-row">
         <div class="header-title">任务管理</div>
-        <div class="header-export" @click="exportTasks">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/>
-          </svg>
-          <span>导出</span>
-        </div>
       </div>
 
       <!-- 统计卡片 -->
@@ -468,38 +462,6 @@ async function doQuickAction(t, act) {
   }
 }
 
-// 导出当前列表为 CSV
-function csvCell(v) { return `"${String(v ?? '').replace(/"/g, '""')}"` }
-function exportTasks() {
-  const rows = displayTasks.value
-  if (!rows.length) { showToast('没有可导出的任务'); return }
-  const header = ['标题', '状态', '任务类型', '任务周期', '负责人', '审批人', '截止日期', '创建人', '创建时间']
-  const lines = [header.join(',')]
-  for (const t of rows) {
-    lines.push([
-      csvCell(t.title),
-      STATUS_LABEL[t.status] || t.status || '',
-      TASK_TYPE_LABEL[t.task_type] || '',
-      PRIORITY_LABEL[t.priority] || '',
-      csvCell(t.assignee?.name || ''),
-      csvCell(t.reviewer?.name || ''),
-      t.due_date || '',
-      csvCell(t.creator?.name || ''),
-      t.created_at ? new Date(t.created_at).toLocaleString('zh-CN') : ''
-    ].join(','))
-  }
-  const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `任务清单_${new Date().toISOString().slice(0, 10)}.csv`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
-  showToast('已导出当前列表')
-}
-
 function enterSelectMode(task) {
   selectMode.value = true
   selectedIds.value = [task.id]
@@ -631,12 +593,6 @@ watch(() => route.path, (newPath) => {
 }
 .header-top-row { position: relative; margin-bottom: 14px; height: 26px; }
 .header-title { position: absolute; left: 50%; transform: translateX(-50%); color: #fff; font-size: 18px; font-weight: 700; }
-.header-export {
-  position: absolute; right: 0; top: 1px;
-  display: flex; align-items: center; gap: 4px;
-  color: #fff; font-size: 13px; opacity: 0.95; cursor: pointer;
-}
-.header-export:active { opacity: 0.7; }
 
 /* 统计卡片 */
 .stat-row {
@@ -828,7 +784,7 @@ watch(() => route.path, (newPath) => {
 
 /* 浮动按钮 */
 .fab {
-  position: fixed; right: 20px; bottom: 84px;
+  position: fixed; right: 20px; bottom: calc(84px + env(safe-area-inset-bottom));
   width: 52px; height: 52px; border-radius: 50%;
   background: linear-gradient(135deg, #4472C4, #5b8def);
   display: flex; align-items: center; justify-content: center;
