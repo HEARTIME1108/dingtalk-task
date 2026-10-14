@@ -39,38 +39,49 @@
       </van-cell>
       <van-cell title="负责人" :value="task.assignee?.name || '-'" />
       <van-cell title="审批人" :value="task.reviewer?.name || '-'" />
+      <van-cell v-if="task.department_head_id" title="部门主任">
+        <template #value>
+          <span>{{ task.department_head?.name || '-' }}</span>
+          <van-tag v-if="task.task_type === 'department'" type="warning" plain style="margin-left:6px;">终审关闭</van-tag>
+        </template>
+      </van-cell>
       <van-cell title="截止日期" :value="task.due_date || '-'" />
       <van-cell title="创建人" :value="task.creator?.name || '-'" />
       <van-cell title="创建时间" :value="formatTime(task.created_at)" />
     </van-cell-group>
 
-    <van-cell-group inset title="标签" v-if="task.tags?.length || canEdit">
+    <van-cell-group inset title="标签">
       <van-cell>
         <template #value>
-          <div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;">
+          <div v-if="task.tags?.length" style="display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;">
             <van-tag v-for="t in task.tags" :key="t.tag_id || t.id" :color="t.color || t.tag?.color" plain size="medium" style="margin-bottom:4px;">
               {{ t.tag?.name || t.name }}
             </van-tag>
           </div>
+          <span v-else style="color:#969799;">暂无标签</span>
         </template>
       </van-cell>
     </van-cell-group>
 
-    <van-cell-group inset title="描述" v-if="task.description">
+    <van-cell-group inset title="描述">
       <van-cell>
-        <template #value><div class="desc">{{ task.description }}</div></template>
+        <template #value>
+          <div v-if="task.description" class="desc">{{ task.description }}</div>
+          <span v-else style="color:#969799;">暂无描述</span>
+        </template>
       </van-cell>
     </van-cell-group>
 
-    <van-cell-group inset title="协作者" v-if="task.assignees?.length">
+    <van-cell-group inset title="协作者">
       <van-cell v-for="a in task.assignees" :key="a.user_id" :title="a.user.name">
         <template #value>
           <van-tag plain>{{ a.role === 'reviewer' ? '审批' : a.role === 'watcher' ? '关注' : '执行' }}</van-tag>
         </template>
       </van-cell>
+      <van-cell v-if="!task.assignees?.length" title="暂无协作者" />
     </van-cell-group>
 
-    <van-cell-group inset title="子任务" v-if="task.subtasks?.length">
+    <van-cell-group inset title="子任务">
       <van-cell
         v-for="st in task.subtasks" :key="st.id"
         :title="st.title" is-link
@@ -80,28 +91,30 @@
           <van-tag :color="STATUS_COLOR[st.status]" size="medium">{{ STATUS_LABEL[st.status] }}</van-tag>
         </template>
       </van-cell>
+      <van-cell v-if="!task.subtasks?.length" title="暂无子任务" />
     </van-cell-group>
 
-    <van-cell-group inset title="附件" v-if="attachments.length || canEdit">
+    <van-cell-group inset title="附件">
       <van-cell v-for="a in attachments" :key="a.id" :title="a.file_name" :label="formatFileSize(a.file_size)">
         <template #value>
           <van-button v-if="canEdit" size="mini" type="danger" plain @click="onDeleteAttachment(a.id)">删除</van-button>
         </template>
       </van-cell>
-      <van-cell v-if="!attachments.length && canEdit" title="暂无附件" />
+      <van-cell v-if="!attachments.length" title="暂无附件" />
       <div v-if="canEdit" style="padding:12px;">
         <van-button size="small" type="primary" plain @click="showAttachmentInput = true">添加附件链接</van-button>
       </div>
     </van-cell-group>
 
-    <van-cell-group inset title="流转记录" v-if="task.flows?.length">
-      <van-steps direction="vertical" :active="task.flows.length - 1">
+    <van-cell-group inset title="流转记录">
+      <van-steps v-if="task.flows?.length" direction="vertical" :active="task.flows.length - 1">
         <van-step v-for="f in task.flows" :key="f.id">
           <h4>{{ f.from_status ? STATUS_LABEL[f.from_status] : '创建' }} → {{ STATUS_LABEL[f.to_status] }}</h4>
           <p v-if="f.comment">{{ f.comment }}</p>
           <p class="meta">{{ f.operator?.name }} · {{ formatTime(f.created_at) }}</p>
         </van-step>
       </van-steps>
+      <van-cell v-else title="暂无记录" />
     </van-cell-group>
 
     <van-cell-group inset title="评论">
