@@ -50,6 +50,15 @@
       </div>
     </div>
 
+    <!-- 排序 / 分组 -->
+    <div class="sort-row">
+      <div v-for="s in sortOptions" :key="s.key"
+        class="sort-item" :class="{ active: sortBy === s.key }"
+        @click="sortBy = s.key">
+        {{ s.label }}
+      </div>
+    </div>
+
     <!-- 搜索 -->
     <div class="search-row">
       <input v-model="keyword" class="search-input" placeholder="搜索任务标题/描述" @keyup.enter="load" />
@@ -70,12 +79,13 @@
 
     <!-- 任务列表 -->
     <div class="task-list">
-      <div v-for="t in tasks" :key="t.id"
-        class="task-card"
-        :class="{ selected: selectedIds.includes(t.id), selectMode }"
-        @click="onTaskClick(t)"
-        @touchstart="onTouchStart(t)" @touchend="onTouchEnd" @touchmove="onTouchEnd"
-      >
+      <div v-for="t in displayTasks" :key="t.id">
+        <div v-if="showHeaderBefore(t)" class="group-header">{{ groupKeyOf(t) }}<span class="group-count">{{ groupCountMap[groupKeyOf(t)] || 0 }}</span></div>
+        <div class="task-card"
+          :class="{ selected: selectedIds.includes(t.id), selectMode }"
+          @click="onTaskClick(t)"
+          @touchstart="onTouchStart(t)" @touchend="onTouchEnd" @touchmove="onTouchEnd"
+        >
         <div class="task-top">
           <div class="task-tags">
             <span v-if="selectMode" class="check-circle" :class="{ checked: selectedIds.includes(t.id) }">
@@ -107,9 +117,14 @@
             <span class="flow-text next">{{ getFlowNext(t) }}</span>
           </div>
         </div>
+        <div v-if="t.due_date" class="time-wrap">
+          <div class="time-bar"><div class="time-fill" :style="{ width: timePct(t) + '%', background: timeColor(t) }"></div></div>
+          <span class="time-label" :style="{ color: timeColor(t) }">{{ timeLabel(t) }}</span>
+        </div>
         <div class="task-bottom">
           <span class="status-badge" :style="{ background: STATUS_COLOR[t.status] }">{{ STATUS_LABEL[t.status] }}</span>
           <span v-if="t.due_date" class="task-due">截止 {{ t.due_date }}</span>
+        </div>
         </div>
       </div>
       <div v-if="!loading && tasks.length === 0" class="empty-state">
@@ -157,7 +172,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   fetchTasks, fetchTaskCounts, fetchTags, deleteTask, quickCompleteTask,
@@ -186,6 +201,76 @@ const activeTag = ref(null)
 const tagCounts = ref({})
 
 const todayStr = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
+
+// 排序 / 分组
+const sortBy = ref('latest')   // latest 最新 / due 按截止日期 / assignee 按负责人
+const sortOptions = [
+  { key: 'latest', label: '最新' },
+  { key: 'due', label: '按截止日期' },
+  { key: 'assignee', label: '按负责人' }
+]
+
+const displayTasks = computed(() => {
+  const list = [...tasks.value]
+  if (sortBy.value === 'due') {
+    list.sort((a, b) => {
+      const da = a.due_date || '9999-12-31'
+      const db = b.due_date || '9999-12-31'
+      return da < db ? -1 : da > db ? 1 : 0
+    })
+  } else if (sortBy.value === 'assignee') {
+    list.sort((a, b) => (a.assignee?.name || '未分配').localeCompare(b.assignee?.name || '未分配', 'zh'))
+  }
+  return list
+})
+
+function groupKeyOf(t) {
+  return sortBy.value === 'assignee' ? (t.assignee?.name || '未分配') : ''
+}
+const groupCountMap = computed(() => {
+  const m = {}
+  for (const t of displayTasks.value) {
+    const k = groupKeyOf(t)
+    m[k] = (m[k] || 0) + 1
+  }
+  return m
+})
+const groupFirstId = computed(() => {
+  const m = {}
+  for (const t of displayTasks.value) {
+    const k = groupKeyOf(t)
+    if (!(k in m)) m[k] = t.id
+  }
+  return m
+})
+function showHeaderBefore(t) {
+  return sortBy.value === 'assignee' && groupFirstId.value[groupKeyOf(t)] === t.id
+}
+
+// 时间进度(创建 → 截止)
+function timePct(t) {
+  if (!t.due_date) return 0
+  const due = new Date(t.due_date + 'T23:59:59').getTime()
+  const start = t.created_at ? new Date(t.created_at).getTime() : (due - 7 * 86400000)
+  const total = due - start
+  if (total <= 0) return 100
+  return Math.max(0, Math.min(100, Math.round(((Date.now() - start) / total) * 100)))
+}
+function timeColor(t) {
+  if (t.status === 'done' || t.status === 'closed') return '#07c160'
+  const p = timePct(t)
+  if (p >= 80) return '#ee0a24'
+  if (p >= 50) return '#ff976a'
+  return '#1989fa'
+}
+function timeLabel(t) {
+  if (t.status === 'done' || t.status === 'closed') return '已完成'
+  const due = new Date(t.due_date + 'T23:59:59').getTime()
+  const d = Math.ceil((due - Date.now()) / 86400000)
+  if (d < 0) return `已逾期 ${Math.abs(d)} 天`
+  if (d === 0) return '今天截止'
+  return `剩 ${d} 天`
+}
 
 // 批量选择
 const selectMode = ref(false)
@@ -440,6 +525,21 @@ watch(() => route.path, (newPath) => {
 }
 .tab-item.active .tab-count { opacity: 0.9; }
 
+/* 排序 / 分组切换 */
+.sort-row {
+  display: flex; gap: 6px; padding: 0 12px 8px;
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+}
+.sort-row::-webkit-scrollbar { display: none; }
+.sort-item {
+  padding: 5px 14px; border-radius: 16px; font-size: 12px;
+  background: #fff; color: #646566; white-space: nowrap;
+  cursor: pointer; border: 1px solid #ebedf0; transition: all 0.2s;
+}
+.sort-item.active {
+  background: #e8f0fe; color: #4472C4; border-color: #4472C4; font-weight: 600;
+}
+
 /* 搜索 */
 .search-row { padding: 0 12px 8px; }
 .search-input {
@@ -527,6 +627,31 @@ watch(() => route.path, (newPath) => {
   color: #fff;
 }
 .task-due { font-size: 12px; color: #969799; }
+
+/* 分组表头(按负责人分组时显示) */
+.group-header {
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 4px 6px; font-size: 13px; font-weight: 600; color: #4472C4;
+}
+.group-count {
+  font-size: 11px; font-weight: 400; color: #fff;
+  background: #4472C4; border-radius: 10px; padding: 1px 7px;
+}
+
+/* 时间进度条(创建 → 截止) */
+.time-wrap {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+}
+.time-bar {
+  flex: 1; height: 6px; border-radius: 3px;
+  background: #ebedf0; overflow: hidden;
+}
+.time-fill {
+  height: 100%; border-radius: 3px; transition: width 0.3s;
+}
+.time-label {
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+}
 
 /* 选择圆圈 */
 .check-circle {

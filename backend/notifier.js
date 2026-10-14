@@ -78,9 +78,8 @@ async function sendActionCard({ userIds, title, markdown, taskUrl }) {
   if (!userIds?.length) return { skipped: true, reason: 'empty_users' }
 
   const token = await getDingtalkAccessToken()
-  const url = 'https://oapi.dingtalk.com/topapi/message/corpconversation/asyncsend/v2'
+  const url = `https://oapi.dingtalk.com/topapi/message/corpconversation/asyncsend_v2?access_token=${token}`
   const body = {
-    access_token: token,
     agent_id: APP_AGENT_ID,
     userid_list: userIds.join(','),
     msg: {
@@ -88,10 +87,8 @@ async function sendActionCard({ userIds, title, markdown, taskUrl }) {
       action_card: {
         title,
         markdown,
-        btn_orientation: '0',
-        btns: [
-          { title: '查看任务', action_url: taskUrl }
-        ]
+        single_title: '查看任务',
+        single_url: taskUrl
       }
     }
   }

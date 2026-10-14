@@ -49,7 +49,16 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    emptyOutDir: false
+    emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vant': ['vant'],
+          'vue-vendor': ['vue', 'vue-router'],
+          'echarts': ['echarts'],
+        }
+      }
+    }
   },
   server: {
     host: '0.0.0.0',

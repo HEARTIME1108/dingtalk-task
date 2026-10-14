@@ -118,6 +118,99 @@ async function getDingtalkAccessToken(c) {
 }
 
 // ============================================================
+// 钉钉工作通知：给指定用户发推送（钉钉会弹窗，不必打开应用即可看到）
+// 用「发送工作通知」接口 asyncsend_v2，需配置 APP_AGENT_ID
+// ============================================================
+async function sendDingtalkWorkNotice(c, userIds, title, markdown, taskUrl) {
+  const APP_AGENT_ID = env(c, 'APP_AGENT_ID')
+  if (!APP_AGENT_ID) {
+    console.warn('[notify] 未配置 APP_AGENT_ID，跳过工作通知')
+    return { skipped: true, reason: 'no_agent_id' }
+  }
+  const ids = [...new Set((userIds || []).filter(Boolean))]
+  if (!ids.length) return { skipped: true, reason: 'empty_users' }
+
+  // 只给有真实钉钉 userid 的用户发（mock 用户发不出去）
+  const users = await adminFetch(c, `users?select=id,dingtalk_user_id&id=in.(${ids.join(',')})`)
+  const dtIds = (users || [])
+    .map(u => u.dingtalk_user_id)
+    .filter(v => v && !String(v).startsWith('mock_'))
+  if (!dtIds.length) {
+    console.warn('[notify] 目标用户无真实钉钉 userid，跳过:', ids.join(','))
+    return { skipped: true, reason: 'no_real_dingtalk_users' }
+  }
+
+  const token = await getDingtalkAccessToken(c)
+  // 注意:asyncsend_v2 的 action_card 按钮必须用 single_title/single_url(或 btn_json_list),
+  // 不能用 btns,否则报 400002 actioncard消息必须同时设置btn_json
+  const actionCard = { title, markdown }
+  if (taskUrl) {
+    actionCard.single_title = '查看任务'
+    actionCard.single_url = taskUrl
+  }
+
+  const res = await fetch(`https://oapi.dingtalk.com/topapi/message/corpconversation/asyncsend_v2?access_token=${token}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      agent_id: APP_AGENT_ID,
+      userid_list: dtIds.join(','),
+      msg: { msgtype: 'action_card', action_card: actionCard }
+    })
+  })
+  const data = await res.json()
+  if (data.errcode !== 0) {
+    console.warn('[notify] 工作通知发送失败:', JSON.stringify(data))
+    return { sent: false, error: data }
+  }
+  return { sent: true, task_id: data.task_id }
+}
+
+// 按事件给任务相关人发通知
+// event: assign 派发 / review 提交审核 / approve 审批通过 / reject 驳回 / close 关闭 / complete 直接完成
+async function notifyTaskEvent(c, task, event, operatorId, operatorName, extraUserIds = []) {
+  try {
+    const base = env(c, 'FRONTEND_BASE_URL', '').replace(/\/$/, '')
+    const taskUrl = base ? `${base}/tasks/${task.id}` : ''
+
+    let targetIds = []
+    let title = ''
+    let markdown = ''
+    if (event === 'assign') {
+      // 创建任务时:负责人、审核人、协作者、部门主任 全部通知
+      targetIds = [task.assignee_id, task.reviewer_id, task.department_head_id, ...extraUserIds]
+      title = '新任务派发'
+      markdown = `**${operatorName}** 派发了任务\n\n**任务**：${task.title}\n**优先级**：${task.priority || '普通'}\n**截止**：${task.due_date || '无'}\n\n请及时处理。`
+    } else if (event === 'review') {
+      targetIds = [task.reviewer_id]
+      title = '有任务待审核'
+      markdown = `**${operatorName}** 提交了任务待你审核\n\n**任务**：${task.title}\n\n请尽快审批。`
+    } else if (event === 'approve') {
+      targetIds = [task.assignee_id, task.creator_id]
+      title = '任务审批通过'
+      markdown = `**${operatorName}** 通过了任务\n\n**任务**：${task.title}`
+    } else if (event === 'reject') {
+      targetIds = [task.assignee_id]
+      title = '任务被驳回'
+      markdown = `**${operatorName}** 驳回了任务，请重新执行\n\n**任务**：${task.title}`
+    } else if (event === 'close' || event === 'complete') {
+      targetIds = [task.creator_id]
+      title = event === 'close' ? '任务已关闭' : '任务已完成'
+      markdown = `**${task.title}** 已${event === 'close' ? '关闭' : '完成'}`
+    } else {
+      return { skipped: true, reason: 'unknown_event' }
+    }
+
+    // 参与流程的人都收到(含操作人自己,例如派给自己/自己给自己审核时也要收到),仅做去重
+    targetIds = [...new Set(targetIds.filter(Boolean))]
+    return await sendDingtalkWorkNotice(c, targetIds, title, markdown, taskUrl)
+  } catch (e) {
+    console.warn('[notify] 通知异常:', e.message)
+    return { sent: false, error: e.message }
+  }
+}
+
+// ============================================================
 // authCode → 企业接口获取用户信息(旧版 JSAPI 流程,兼容性好)
 // ============================================================
 async function getDingtalkUserByAuthCode(c, authCode) {
@@ -709,6 +802,11 @@ app.post('/api/tasks', requireUser, async (c) => {
       })
     })
 
+    // 发钉钉工作通知给负责人
+    const creatorData = await adminFetch(c, `users?id=eq.${userId}&select=name`)
+    const creatorName = creatorData && creatorData[0] ? creatorData[0].name : '系统'
+    await notifyTaskEvent(c, task, 'assign', userId, creatorName, assignee_ids || [])
+
     return c.json(task)
   } catch (e) {
     console.error('[create task]', e)
@@ -880,7 +978,23 @@ app.post('/api/tasks/:id/transition', requireUser, async (c) => {
         comment: comment || null, operator_id: userId
       })
     })
-    return c.json({ ok: true, task: Array.isArray(updated) ? updated[0] : updated })
+
+    // 发钉钉通知
+    const updatedTask = Array.isArray(updated) ? updated[0] : updated
+    const operatorData = await adminFetch(c, `users?id=eq.${userId}&select=name`)
+    const operatorName = operatorData && operatorData[0] ? operatorData[0].name : '系统'
+
+    // 状态流转时通知相关人
+    let event = null
+    if (to_status === 'pending_review') event = 'review'   // 提交审核 → 审批人
+    else if (to_status === 'done') event = 'approve'       // 审批通过 → 负责人 + 创建人
+    else if (to_status === 'rejected') event = 'reject'    // 驳回 → 负责人
+    else if (to_status === 'closed') event = 'close'       // 关闭 → 创建人
+    if (event) {
+      await notifyTaskEvent(c, task, event, userId, operatorName)
+    }
+
+    return c.json({ ok: true, task: updatedTask })
   } catch (e) {
     console.error('[transition]', e)
     return c.json({ message: e.message }, 500)
@@ -913,6 +1027,12 @@ app.post('/api/tasks/:id/quick-complete', requireUser, async (c) => {
         comment, operator_id: userId
       })
     })
+
+    // 通知创建人：任务已完成
+    const opData = await adminFetch(c, `users?id=eq.${userId}&select=name`)
+    const opName = opData && opData[0] ? opData[0].name : '系统'
+    await notifyTaskEvent(c, task, 'complete', userId, opName)
+
     return c.json({ ok: true })
   } catch (e) {
     return c.json({ message: e.message }, 500)
@@ -934,7 +1054,9 @@ app.get('/api/me', requireUser, async (c) => {
 // users
 app.get('/api/users', requireUser, async (c) => {
   const data = await adminFetch(c, 'users?select=id,name,avatar_url,dingtalk_user_id&order=name.asc')
-  return c.json(data || [])
+  // 过滤掉“调试登录”产生的 mock 账号,避免出现在成员选择列表(它们也收不到钉钉通知)
+  const list = (data || []).filter(u => !String(u.dingtalk_user_id || '').startsWith('mock_'))
+  return c.json(list)
 })
 
 // 同步组织成员:调用钉钉通讯录 API,把组织里所有人拉到数据库
@@ -1270,11 +1392,13 @@ app.get('/api/cron/check-due-tasks', async (c) => {
     }
   }
   try {
+    // 截止前一天提醒：只挑「截止日期 = 明天」且未完成的任务
     const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10)
-    const tasks = await adminFetch(c, `tasks?status=neq.done&status=neq.cancelled&due_date=gte.${new Date().toISOString().slice(0,10)}&due_date=lt.${tomorrow}T00:00:00&select=id,assignee_id,title,due_date`)
+    const dayAfter = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10)
+    const tasks = await adminFetch(c, `tasks?status=neq.done&status=neq.cancelled&due_date=gte.${tomorrow}&due_date=lt.${dayAfter}&select=id,assignee_id,reviewer_id,title,due_date`)
     const list = tasks || []
     for (const t of list) {
-      try { await notifyTask({ taskId: t.id, type: 'due_remind', recipientIds: [t.assignee_id].filter(Boolean) }) } catch (e) {}
+      try { await notifyTask({ taskId: t.id, type: 'due_remind', recipientIds: [t.assignee_id, t.reviewer_id].filter(Boolean) }) } catch (e) {}
     }
     return c.json({ checked: list.length })
   } catch (e) {
@@ -1293,10 +1417,10 @@ app.get('/api/cron/check-overdue-tasks', async (c) => {
   }
   try {
     const now = new Date().toISOString()
-    const tasks = await adminFetch(c, `tasks?status=neq.done&status=neq.cancelled&due_date=lt.${now}&select=id,assignee_id,title,due_date`)
+    const tasks = await adminFetch(c, `tasks?status=neq.done&status=neq.cancelled&due_date=lt.${now}&select=id,assignee_id,reviewer_id,title,due_date`)
     const list = tasks || []
     for (const t of list) {
-      try { await notifyTask({ taskId: t.id, type: 'overdue', recipientIds: [t.assignee_id].filter(Boolean) }) } catch (e) {}
+      try { await notifyTask({ taskId: t.id, type: 'overdue', recipientIds: [t.assignee_id, t.reviewer_id].filter(Boolean) }) } catch (e) {}
     }
     return c.json({ checked: list.length })
   } catch (e) {
