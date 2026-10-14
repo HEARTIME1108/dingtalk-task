@@ -822,16 +822,18 @@ app.put('/api/tasks/:id', requireUser, async (c) => {
     const body = await c.req.json()
     const { title, description, priority, assignee_id, reviewer_id, due_date, task_type, department_head_id, assignee_ids } = body
 
-    const exist = await adminFetch(c, `tasks?id=eq.${id}&select=creator_id`)
+    const exist = await adminFetch(c, `tasks?id=eq.${id}&select=creator_id,department_head_id,reviewer_id`)
     if (!exist || !exist.length) return c.json({ message: '任务不存在' }, 404)
 
-    // 管理员或创建人可编辑
+    // 管理员 / 创建人 / 部门主任 / 审批人 可编辑
     let isAdmin = false
     try {
       const adminCheck = await adminFetch(c, `users?id=eq.${userId}&select=is_admin`)
       isAdmin = adminCheck && adminCheck.length && adminCheck[0].is_admin === true
     } catch (e) {}
-    if (exist[0].creator_id !== userId && !isAdmin) return c.json({ message: '只有创建人或管理员能修改' }, 403)
+    const t = exist[0]
+    const canModify = t.creator_id === userId || t.department_head_id === userId || t.reviewer_id === userId || isAdmin
+    if (!canModify) return c.json({ message: '只有创建人、部门主任、审批人或管理员能修改' }, 403)
 
     const updatePayload = { title, description, priority, assignee_id, reviewer_id, due_date }
     if (task_type) updatePayload.task_type = task_type
@@ -866,12 +868,12 @@ app.put('/api/tasks/:id', requireUser, async (c) => {
   }
 })
 
-// 删除(创建人/审批人/负责人都可删)
+// 删除(仅创建人/管理员可删)
 app.delete('/api/tasks/:id', requireUser, async (c) => {
   try {
     const userId = c.get('userId')
     const id = c.req.param('id')
-    const exist = await adminFetch(c, `tasks?id=eq.${id}&select=creator_id,assignee_id,reviewer_id`)
+    const exist = await adminFetch(c, `tasks?id=eq.${id}&select=creator_id`)
     if (!exist || !exist.length) return c.json({ message: '任务不存在' }, 404)
     const t = exist[0]
     // 检查是否管理员
@@ -882,8 +884,8 @@ app.delete('/api/tasks/:id', requireUser, async (c) => {
     } catch (e) {
       isAdmin = false
     }
-    const canDelete = isAdmin || t.creator_id === userId || t.assignee_id === userId || t.reviewer_id === userId
-    if (!canDelete) return c.json({ message: '只有创建人/负责人/审批人能删除' }, 403)
+    const canDelete = isAdmin || t.creator_id === userId
+    if (!canDelete) return c.json({ message: '只有创建人或管理员能删除' }, 403)
 
     await adminFetch(c, `tasks?id=eq.${id}`, { method: 'DELETE' })
     return c.json({ ok: true })

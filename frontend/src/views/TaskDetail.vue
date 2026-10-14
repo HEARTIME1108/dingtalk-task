@@ -218,8 +218,8 @@ const isAssignee = computed(() => task.value?.assignee_id === userStore.user?.id
 const isReviewer = computed(() => task.value?.reviewer_id === userStore.user?.id)
 const isDepartmentHead = computed(() => task.value?.department_head_id === userStore.user?.id)
 const isAdmin = computed(() => !!task.value?._isAdmin)
-const canDelete = computed(() => isAdmin.value || isCreator.value || isAssignee.value || isReviewer.value)
-const canEdit = computed(() => isAdmin.value || isCreator.value)
+const canDelete = computed(() => isAdmin.value || isCreator.value)
+const canEdit = computed(() => isAdmin.value || isCreator.value || isDepartmentHead.value || isReviewer.value)
 
 const attachments = ref([])
 const showAttachmentInput = ref(false)
