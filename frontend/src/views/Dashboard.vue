@@ -147,13 +147,18 @@ function onExport() {
   showExport.value = true
 }
 
-// 直接打开后端下载链接 → 交给钉钉内置浏览器下载/打开(可再"发送到外部应用")
+// 用隐藏 iframe 触发下载,避免 window.open 把文件内容当文本弹出来
 function doExport(format) {
   showExport.value = false
   const token = getToken()
   if (!token) { showToast('请先登录'); return }
   const url = `${API_BASE}/stats/export?format=${format}&token=${encodeURIComponent(token)}`
-  window.open(url, '_blank')
+  const iframe = document.createElement('iframe')
+  iframe.style.display = 'none'
+  iframe.src = url
+  document.body.appendChild(iframe)
+  setTimeout(() => { if (iframe.parentNode) iframe.parentNode.removeChild(iframe) }, 60000)
+  showToast('已开始下载,请到钉钉文件中查看')
 }
 
 onMounted(loadData)
