@@ -851,7 +851,7 @@ app.put('/api/tasks/:id', requireUser, async (c) => {
     } catch (e) {}
     const t = exist[0]
     const canModify = t.creator_id === userId || t.department_head_id === userId || t.reviewer_id === userId || isAdmin
-    if (!canModify) return c.json({ message: '只有创建人、部门主任、审批人或管理员能修改' }, 403)
+    if (!canModify) return c.json({ message: '只有创建人、部门审批、审批人或管理员能修改' }, 403)
 
     const updatePayload = { title, description, priority, assignee_id, reviewer_id, due_date }
     if (task_type) updatePayload.task_type = task_type
@@ -978,7 +978,7 @@ app.post('/api/tasks/:id/transition', requireUser, async (c) => {
         requiredName = '负责人'
       } else if (requiredRole === 'department_head') {
         allowed = task.department_head_id === userId
-        requiredName = '部门主任'
+        requiredName = '部门审批'
       }
       if (!allowed) {
         return c.json({ message: `只有${requiredName}能执行此操作` }, 403)
@@ -1478,7 +1478,7 @@ app.get('/api/stats/export', async (c) => {
     const stamp = new Date().toISOString().slice(0, 10)
     const format = (c.req.query('format') || 'csv').toLowerCase()
 
-    const HEAD = ['ID', '标题', '描述', '状态', '任务周期', '任务类型', '创建人', '负责人', '审批人', '部门主任', '协作者', '截止日期', '开始时间', '完成时间', '已用天数', '剩余天数', '标签', '流程记录', '创建时间', '更新时间']
+    const HEAD = ['ID', '标题', '描述', '状态', '任务周期', '任务类型', '创建人', '负责人', '审批人', '部门审批', '协作者', '截止日期', '开始时间', '完成时间', '已用天数', '剩余天数', '标签', '流程记录', '创建时间', '更新时间']
 
     let buf, contentType, filename
     if (format === 'xls') {
@@ -1535,7 +1535,10 @@ app.get('/api/stats/export', async (c) => {
         body: buf
       })
       if (up.ok) {
-        const url = `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${path}`
+        const baseUrl = `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${path}`
+        // 加 ?download 让 Supabase 返回 Content-Disposition: attachment,
+        // 钉钉会把内容当作"文件"下载(而非网页链接),之后可作为文件转发分享
+        const url = `${baseUrl}?download=${encodeURIComponent(filename)}`
         return c.json({ url, filename })
       }
     } catch (e) {

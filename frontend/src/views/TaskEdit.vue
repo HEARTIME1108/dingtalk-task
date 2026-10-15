@@ -54,7 +54,7 @@
             placeholder="请选择" @click="showReviewer = true" />
           <van-field
             v-if="form.task_type === 'department'"
-            label="部门主任" is-link readonly
+            label="部门审批" is-link readonly
             :model-value="labelOf(form.department_head_id)"
             placeholder="请选择" @click="showDepartmentHead = true" />
           <van-field

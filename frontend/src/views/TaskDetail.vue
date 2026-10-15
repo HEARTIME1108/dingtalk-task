@@ -39,7 +39,7 @@
       </van-cell>
       <van-cell title="负责人" :value="task.assignee?.name || '-'" />
       <van-cell title="审批人" :value="task.reviewer?.name || '-'" />
-      <van-cell v-if="task.department_head_id" title="部门主任">
+      <van-cell v-if="task.department_head_id" title="部门审批">
         <template #value>
           <span>{{ task.department_head?.name || '-' }}</span>
           <van-tag v-if="task.task_type === 'department'" type="warning" plain style="margin-left:6px;">终审关闭</van-tag>
@@ -364,7 +364,7 @@ const nextActions = computed(() => {
 const roleHint = computed(() => {
   if (!task.value) return ''
   if (isAdmin.value) return '管理员'
-  if (isDepartmentHead.value) return '你是部门主任'
+  if (isDepartmentHead.value) return '你是部门审批'
   if (isCreator.value) return '你是创建人'
   if (isReviewer.value) return '你是审批人'
   if (isAssignee.value) return '你是负责人'
