@@ -4,6 +4,7 @@
     <div class="header-bar">
       <div class="header-top-row">
         <div class="header-title">任务管理</div>
+        <span v-if="selectMode" class="header-cancel" @click="exitSelectMode">取消</span>
       </div>
 
       <!-- 统计卡片 -->
@@ -593,6 +594,7 @@ watch(() => route.path, (newPath) => {
 }
 .header-top-row { position: relative; margin-bottom: 14px; height: 26px; }
 .header-title { position: absolute; left: 50%; transform: translateX(-50%); color: #fff; font-size: 18px; font-weight: 700; }
+.header-cancel { position: absolute; right: 0; top: 50%; transform: translateY(-50%); color: #fff; font-size: 14px; cursor: pointer; }
 
 /* 统计卡片 */
 .stat-row {
@@ -796,11 +798,12 @@ watch(() => route.path, (newPath) => {
 
 /* 批量操作栏 */
 .batch-bar {
-  position: fixed; left: 0; right: 0; bottom: 0;
+  position: fixed; left: 0; right: 0;
+  bottom: calc(60px + env(safe-area-inset-bottom));
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 16px; background: #fff;
   box-shadow: 0 -2px 12px rgba(0,0,0,0.1);
-  z-index: 100;
+  z-index: 1000;
 }
 .batch-left { display: flex; align-items: center; gap: 12px; }
 .batch-count { font-size: 14px; font-weight: 600; color: #323233; }
