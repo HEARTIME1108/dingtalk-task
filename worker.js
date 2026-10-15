@@ -459,6 +459,57 @@ app.get('/api/auth/config', (c) => c.json({
   appKey: env(c, 'DINGTALK_APP_KEY')
 }))
 
+// ============================================================
+// 钉钉 JSAPI 鉴权(dd.config 签名)
+// 用于前端调用需要鉴权的 JSAPI(如 saveFileToDingTalk 转存文件到钉盘)
+// ============================================================
+let jsapiTicketCache = { ticket: null, expire: 0 }
+
+async function getJsapiTicket(c) {
+  const now = Date.now()
+  if (jsapiTicketCache.ticket && now < jsapiTicketCache.expire - 60000) return jsapiTicketCache.ticket
+  const token = await getDingtalkAccessToken(c)
+  const res = await fetch(`https://oapi.dingtalk.com/get_jsapi_ticket?access_token=${token}`)
+  const data = await res.json()
+  if (data.errcode !== 0 || !data.ticket) {
+    throw new Error('获取 jsapi_ticket 失败: ' + (data.errmsg || JSON.stringify(data)))
+  }
+  jsapiTicketCache = { ticket: data.ticket, expire: now + (data.expires_in || 7200) * 1000 }
+  return data.ticket
+}
+
+// SHA-256 十六进制
+async function sha256Hex(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str))
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+function safeDecode(u) {
+  try { return decodeURIComponent(u) } catch (e) { return u }
+}
+
+// 前端获取 dd.config 所需签名参数
+app.get('/api/dingtalk/jsapi-config', async (c) => {
+  try {
+    const rawUrl = c.req.query('url') || ''
+    const cleanUrl = rawUrl.split('#')[0] // 不含 # 及其后部分
+    const ticket = await getJsapiTicket(c)
+    const nonceStr = Math.random().toString(36).slice(2, 16)
+    const timeStamp = String(Math.floor(Date.now() / 1000))
+    const plain = `jsapi_ticket=${ticket}&noncestr=${nonceStr}&timestamp=${timeStamp}&url=${safeDecode(cleanUrl)}`
+    const signature = await sha256Hex(plain)
+    return c.json({
+      agentId: env(c, 'APP_AGENT_ID'),
+      corpId: env(c, 'DINGTALK_CORP_ID'),
+      timeStamp,
+      nonceStr,
+      signature
+    })
+  } catch (e) {
+    return c.json({ message: e.message || '获取钉钉鉴权签名失败' }, 500)
+  }
+})
+
 // 同步组织成员的核心函数(可被 login 和 /api/users/sync 复用)
 async function syncOrgMembers(c) {
   const token = await getDingtalkAccessToken(c)

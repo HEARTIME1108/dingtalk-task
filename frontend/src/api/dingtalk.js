@@ -41,3 +41,13 @@ export async function getAppConfig() {
   if (!res.ok) throw new Error('获取配置失败')
   return res.json()
 }
+
+/**
+ * 获取钉钉 JSAPI 鉴权签名(dd.config 使用)
+ * @param {string} url 当前页面 location.href(不含 # 及其后部分)
+ */
+export async function getJsapiConfig(url) {
+  const res = await fetchWithTimeout(`${API_BASE}/dingtalk/jsapi-config?url=${encodeURIComponent(url)}`)
+  if (!res.ok) throw new Error('获取钉钉鉴权失败')
+  return res.json()
+}

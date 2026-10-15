@@ -52,6 +52,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 echarts.use([PieChart, BarChart, LineChart, TitleComponent, TooltipComponent, GridComponent, LegendComponent, CanvasRenderer])
 import { showToast } from 'vant'
 import { STATUS_LABEL } from '../api/task'
+import { isInDingTalk, saveFileToDingTalk } from '../utils/dd-auth'
 
 const statusChart = ref()
 const assigneeChart = ref()
@@ -159,7 +160,17 @@ async function doExport(format) {
     if (ct.includes('application/json')) {
       const data = await res.json()
       if (data.url) {
-        // 直接在当前 WebView 打开文件 URL,钉钉会提示下载或用其他应用打开
+        // 优先转存到钉盘:文件会出现在钉钉「钉盘」中,可查看并转发分享
+        if (isInDingTalk()) {
+          try {
+            await saveFileToDingTalk(data.url, data.filename || '任务清单.xlsx')
+            showToast({ message: '已保存到钉钉「钉盘」,可前往钉盘查看或转发', duration: 3000 })
+            return
+          } catch (e) {
+            // 钉盘方案不可用时,回退为直接打开文件
+          }
+        }
+        // 直接在当前 WebView 打开文件 URL
         window.location.href = data.url
         showToast({ message: '文件已生成,正在打开...', duration: 2000 })
         return

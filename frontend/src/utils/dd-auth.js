@@ -66,3 +66,50 @@ export async function requestAuthCode(corpId) {
 export function getMockAuthCode() {
   return 'mock_debug_user'
 }
+
+/**
+ * 把文件转存到钉盘(导出文件后使用,可在钉盘里查看并转发分享)
+ * @param {string} fileUrl 文件地址
+ * @param {string} fileName 文件名
+ */
+export async function saveFileToDingTalk(fileUrl, fileName) {
+  if (!isInDingTalk()) throw new Error('NOT_IN_DINGTALK')
+  const mod = await import('dingtalk-jsapi')
+  const dd = mod.default || mod
+  const { getJsapiConfig } = await import('../api/dingtalk')
+
+  // 当前页面地址(不含 # 及其后部分),需与前端页面 URL 严格一致
+  const pageUrl = location.href.split('#')[0]
+  const cfg = await getJsapiConfig(pageUrl)
+
+  // 先完成 dd.config 鉴权
+  await withTimeout(
+    new Promise((resolve, reject) => {
+      try {
+        dd.config({
+          agentId: cfg.agentId,
+          corpId: cfg.corpId,
+          timeStamp: cfg.timeStamp,
+          nonceStr: cfg.nonceStr,
+          signature: cfg.signature,
+          jsApiList: ['saveFileToDingTalk']
+        })
+      } catch (e) { reject(e); return }
+      dd.ready(() => resolve(true))
+    }),
+    8000,
+    '钉钉鉴权超时'
+  )
+
+  // 转存到钉盘
+  return withTimeout(new Promise((resolve, reject) => {
+    try {
+      dd.saveFileToDingTalk({
+        url: fileUrl,
+        name: fileName,
+        success: (res) => resolve(res),
+        fail: (err) => reject(new Error((err && (err.errorMessage || err.error || err.message)) || '保存到钉盘失败'))
+      })
+    } catch (e) { reject(e) }
+  }), 30000, '保存到钉盘超时')
+}
