@@ -1389,50 +1389,130 @@ app.get('/api/stats/export', async (c) => {
     } catch (e) {}
 
     // 管理员看全部,非管理员看自己相关的
+    // 尝试带完整关联的查询(含 task_type/department_head/assignees/flows/tags),失败回退到基础版
+    const baseCols = 'id,title,description,status,priority,due_date,created_at,updated_at'
+    const baseJoins = 'creator:users!tasks_creator_id_fkey(name),assignee:users!tasks_assignee_id_fkey(name),reviewer:users!tasks_reviewer_id_fkey(name)'
+    const extraJoins = 'department_head:users!tasks_department_head_id_fkey(name),assignees:task_assignees(role,user:users(name)),flows:task_flows(from_status,to_status,created_at,operator:users(name)),tags:task_tags(tag:tags(name))'
+    const order = 'order=created_at.desc'
+    const filter = isAdmin ? '' : `or=(creator_id.eq.${userId},assignee_id.eq.${userId},reviewer_id.eq.${userId})&`
+
     let tasks
-    if (isAdmin) {
-      tasks = await adminFetch(c, `tasks?select=id,title,status,priority,creator:users!tasks_creator_id_fkey(name),assignee:users!tasks_assignee_id_fkey(name),reviewer:users!tasks_reviewer_id_fkey(name),due_date,created_at&order=created_at.desc`)
-    } else {
-      tasks = await adminFetch(c, `tasks?or=(creator_id.eq.${userId},assignee_id.eq.${userId},reviewer_id.eq.${userId})&select=id,title,status,priority,creator:users!tasks_creator_id_fkey(name),assignee:users!tasks_assignee_id_fkey(name),reviewer:users!tasks_reviewer_id_fkey(name),due_date,created_at&order=created_at.desc`)
+    try {
+      tasks = await adminFetch(c, `tasks?${filter}select=${baseCols},task_type,${baseJoins},${extraJoins}&${order}`)
+    } catch (e1) {
+      try {
+        tasks = await adminFetch(c, `tasks?${filter}select=${baseCols},${baseJoins},${extraJoins}&${order}`)
+      } catch (e2) {
+        tasks = await adminFetch(c, `tasks?${filter}select=${baseCols},${baseJoins}&${order}`)
+      }
     }
     const list = tasks || []
 
-    const STATUS_LABELS = { todo: '待办', in_progress: '进行中', pending_review: '待审核', done: '已完成', rejected: '已驳回', closed: '已关闭' }
+    const STATUS_LABELS = { draft: '草稿', todo: '待办', pending_review: '待审核', approved: '已通过', rejected: '已驳回', in_progress: '进行中', done: '已完成', cancelled: '已取消', closed: '已关闭' }
     const PRIORITY_LABELS = { daily: '日任务', weekly: '周任务', monthly: '月任务', quarterly: '季度任务', yearly: '年任务' }
+    const TASK_TYPE_LABELS = { team: '班组任务', department: '部门任务', personal: '个人任务' }
+    const ROLE_LABELS = { assignee: '协作', reviewer: '审核', watcher: '关注' }
 
-    const header = 'ID,标题,状态,任务周期,创建人,负责人,审批人,截止日期,创建时间'
-    const rows = list.map(t => [
-      t.id,
-      `"${(t.title || '').replace(/"/g, '""')}"`,
-      STATUS_LABELS[t.status] || t.status,
-      PRIORITY_LABELS[t.priority] || t.priority,
-      `"${t.creator?.name || '-'}"`,
-      `"${t.assignee?.name || '-'}"`,
-      `"${t.reviewer?.name || '-'}"`,
-      t.due_date || '-',
-      t.created_at ? new Date(t.created_at).toLocaleString('zh-CN') : '-'
-    ].join(','))
+    const now = new Date()
+    // 从 flows 中推算开始/结束时间
+    function getTiming(t) {
+      const flows = (t.flows || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+      let startAt = null, endAt = null
+      for (const f of flows) {
+        if (!startAt && (f.to_status === 'in_progress' || f.to_status === 'todo')) {
+          startAt = f.created_at
+        }
+        if (!endAt && (f.to_status === 'done' || f.to_status === 'closed' || f.to_status === 'cancelled')) {
+          endAt = f.created_at
+        }
+      }
+      // 没有流转记录时,用 created_at 作为开始
+      if (!startAt) startAt = t.created_at
+      return { startAt, endAt }
+    }
+
+    function daysBetween(a, b) {
+      if (!a || !b) return null
+      const ms = new Date(b) - new Date(a)
+      return Math.ceil(ms / 86400000)
+    }
+
+    // 构建每一行的完整数据
+    const buildRow = (t) => {
+      const { startAt, endAt } = getTiming(t)
+      const daysUsed = daysBetween(startAt, endAt || now)
+      const daysLeft = (t.due_date && !endAt) ? daysBetween(now, t.due_date) : (endAt ? 0 : null)
+      const assignees = (t.assignees || []).map(a => `${a.user?.name || '-'}(${ROLE_LABELS[a.role] || a.role})`).join('、') || '-'
+      const flows = (t.flows || [])
+        .slice()
+        .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+        .map(f => `${f.operator?.name || '-'}:${STATUS_LABELS[f.from_status] || '-'}→${STATUS_LABELS[f.to_status] || f.to_status}`)
+        .join('；') || '-'
+      const tags = (t.tags || []).map(tg => tg.tag?.name).filter(Boolean).join('、') || '-'
+      return {
+        id: t.id,
+        title: t.title || '',
+        description: t.description || '',
+        status: STATUS_LABELS[t.status] || t.status,
+        priority: PRIORITY_LABELS[t.priority] || t.priority || '',
+        taskType: TASK_TYPE_LABELS[t.task_type] || (t.task_type || '-'),
+        creator: t.creator?.name || '-',
+        assignee: t.assignee?.name || '-',
+        reviewer: t.reviewer?.name || '-',
+        departmentHead: t.department_head?.name || '-',
+        assignees,
+        dueDate: t.due_date || '-',
+        startAt: startAt ? new Date(startAt).toLocaleString('zh-CN') : '-',
+        endAt: endAt ? new Date(endAt).toLocaleString('zh-CN') : '-',
+        daysUsed: daysUsed !== null ? `${daysUsed} 天` : '-',
+        daysLeft: daysLeft !== null ? `${daysLeft} 天` : '-',
+        flows,
+        tags,
+        createdAt: t.created_at ? new Date(t.created_at).toLocaleString('zh-CN') : '-',
+        updatedAt: t.updated_at ? new Date(t.updated_at).toLocaleString('zh-CN') : '-'
+      }
+    }
+
+    const rows = list.map(buildRow)
 
     const stamp = new Date().toISOString().slice(0, 10)
     const format = (c.req.query('format') || 'csv').toLowerCase()
 
+    const HEAD = ['ID', '标题', '描述', '状态', '任务周期', '任务类型', '创建人', '负责人', '审批人', '部门主任', '协作者', '截止日期', '开始时间', '完成时间', '已用天数', '剩余天数', '标签', '流程记录', '创建时间', '更新时间']
+
     let buf, contentType, filename
     if (format === 'xls') {
       // 用 SheetJS 生成真正的 .xlsx 文件(钉钉/WPS/Excel 均可预览打开)
-      const head = ['ID', '标题', '状态', '任务周期', '创建人', '负责人', '审批人', '截止日期', '创建时间']
-      const data = list.map(t => [
-        t.id, t.title || '', STATUS_LABELS[t.status] || t.status, PRIORITY_LABELS[t.priority] || (t.priority || ''),
-        t.creator?.name || '-', t.assignee?.name || '-', t.reviewer?.name || '-',
-        t.due_date || '-', t.created_at ? new Date(t.created_at).toLocaleString('zh-CN') : '-'
+      const data = rows.map(r => [
+        r.id, r.title, r.description, r.status, r.priority, r.taskType,
+        r.creator, r.assignee, r.reviewer, r.departmentHead, r.assignees,
+        r.dueDate, r.startAt, r.endAt, r.daysUsed, r.daysLeft, r.tags, r.flows,
+        r.createdAt, r.updatedAt
       ])
-      const ws = XLSX.utils.aoa_to_sheet([head, ...data])
+      const ws = XLSX.utils.aoa_to_sheet([HEAD, ...data])
+      // 设置列宽
+      ws['!cols'] = [
+        { wch: 10 }, { wch: 20 }, { wch: 30 }, { wch: 8 }, { wch: 8 }, { wch: 8 },
+        { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 20 },
+        { wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 8 }, { wch: 8 }, { wch: 10 }, { wch: 40 },
+        { wch: 18 }, { wch: 18 }
+      ]
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, '任务清单')
       buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' })
       contentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
       filename = `tasks_${stamp}.xlsx`
     } else {
-      const csv = '\ufeff' + header + '\n' + rows.join('\n')
+      const csvRows = rows.map(r => [
+        r.id,
+        `"${(r.title || '').replace(/"/g, '""')}"`,
+        `"${(r.description || '').replace(/"/g, '""').replace(/\n/g, ' ')}"`,
+        r.status, r.priority, r.taskType,
+        `"${r.creator}"`, `"${r.assignee}"`, `"${r.reviewer}"`, `"${r.departmentHead}"`, `"${r.assignees}"`,
+        r.dueDate, r.startAt, r.endAt, r.daysUsed, r.daysLeft, `"${r.tags}"`, `"${r.flows}"`,
+        r.createdAt, r.updatedAt
+      ].join(','))
+      const csv = '\ufeff' + HEAD.join(',') + '\n' + csvRows.join('\n')
       buf = new TextEncoder().encode(csv).buffer
       contentType = 'text/csv; charset=utf-8'
       filename = `tasks_${stamp}.csv`
