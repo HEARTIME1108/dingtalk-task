@@ -23,7 +23,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { getAppConfig, loginWithAuthCode } from '../api/dingtalk'
+import { getAppConfig, getJsapiConfig, loginWithAuthCode } from '../api/dingtalk'
 import { requestAuthCode, isInDingTalk, getMockAuthCode } from '../utils/dd-auth'
 import { setSession } from '../api/supabase'
 import { loadUser } from '../stores/user'
@@ -72,15 +72,21 @@ async function doLogin(retryCount = 0) {
   debugInfo.value = ''
   let authCode = null
   try {
-    const cfg = await getAppConfig()
+    // corpId 已缓存到 localStorage（getAppConfig 内部处理），jsapi 配置可与它并行获取
+    const cfgPromise = getAppConfig()
+    const jsapiPromise = isInDingTalk()
+      ? getJsapiConfig(location.href.split('#')[0])
+      : null
+
+    const cfg = await cfgPromise
     loadingText.value = retryCount > 0
       ? `重新获取授权码（第 ${retryCount} 次）...`
       : '获取钉钉授权码...'
 
-    // 在钉钉内：用 JSAPI 获取 authCode
+    // 在钉钉内：用 JSAPI 获取 authCode（传入预取的 jsapi 配置，避免再等一次网络）
     // 不在钉钉内：用 mock 登录
     authCode = isInDingTalk()
-      ? await requestAuthCode(cfg.corpId)
+      ? await requestAuthCode(cfg.corpId, jsapiPromise)
       : getMockAuthCode()
 
     loadingText.value = '登录中...'

@@ -1,6 +1,7 @@
 import { reactive } from 'vue'
 import { getCurrentUser, isLoggedIn, signOut } from '../api/supabase'
 import { fetchMe } from '../api/task'
+import { getCache, setCache, clearCache, CACHE_KEYS } from '../utils/cache'
 
 export const userStore = reactive({
   user: null,
@@ -15,14 +16,20 @@ export async function loadUser() {
     const u = await getCurrentUser()
     userStore.user = u
     if (u) {
-      // 通过后端 /api/me 拿 profile(含 name/is_admin),绕 RLS
+      // 先展示缓存的 profile(秒开),后台再刷新
+      const cachedProfile = getCache(CACHE_KEYS.PROFILE)
+      if (cachedProfile) {
+        userStore.profile = cachedProfile
+        if (cachedProfile.id) userStore.user = { ...userStore.user, id: cachedProfile.id }
+      }
+      // 后台刷新 profile
       try {
         const me = await fetchMe()
         userStore.profile = me
-        // 同步 user.id 以防 JWT 解码出来的 id 和 DB 不一致
         if (me?.id) userStore.user = { ...userStore.user, id: me.id }
+        setCache(CACHE_KEYS.PROFILE, me)
       } catch (e) {
-        userStore.profile = null
+        // 刷新失败但有缓存,不报错
       }
     } else {
       userStore.profile = null
@@ -33,6 +40,7 @@ export async function loadUser() {
 }
 
 export async function logout() {
+  clearCache(CACHE_KEYS.PROFILE)
   await signOut()
   userStore.user = null
   userStore.profile = null

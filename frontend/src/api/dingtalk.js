@@ -35,11 +35,18 @@ export async function loginWithAuthCode(authCode) {
 
 /**
  * 获取应用配置(corpId 等),由后端下发
+ * corpId 固定不变,缓存到 localStorage,避免每次登录多一次网络请求
  */
 export async function getAppConfig() {
+  const cached = localStorage.getItem('app_config')
+  if (cached) {
+    try { return JSON.parse(cached) } catch { /* fallthrough */ }
+  }
   const res = await fetchWithTimeout(`${API_BASE}/auth/config`)
   if (!res.ok) throw new Error('获取配置失败')
-  return res.json()
+  const data = await res.json()
+  try { localStorage.setItem('app_config', JSON.stringify(data)) } catch {}
+  return data
 }
 
 /**

@@ -75,7 +75,7 @@
         </div>
       </van-form>
 
-      <van-popup v-model:show="showAssignee" position="bottom" round @open="openPicker">
+      <van-popup v-model:show="showAssignee" position="bottom" round @open="onPickerOpen" @close="onPickerClose">
         <div class="picker-header">
           <span class="picker-close" @click="showAssignee = false">取消</span>
           <span class="picker-title">选择负责人</span>
@@ -84,9 +84,17 @@
         <van-search v-model="userSearch" placeholder="搜索姓名" shape="round" />
         <div class="picker-list">
           <van-radio-group v-model="form.assignee_id">
-            <van-cell v-for="u in filteredUsers" :key="u.id" :title="u.name" clickable @click="form.assignee_id = u.id">
-              <template #right-icon><van-radio :name="u.id" /></template>
-            </van-cell>
+            <template v-for="grp in groupedFilteredUsers" :key="grp.key">
+              <div class="picker-group-title" @click="togglePickerGroup(grp.key)">
+                <span>{{ grp.title }}</span>
+                <span class="picker-group-arrow" :class="{ folded: pickerGroupOpen[grp.key] === false }">▼</span>
+              </div>
+              <template v-if="pickerGroupOpen[grp.key] !== false">
+                <van-cell v-for="u in grp.users" :key="u.id" :title="u.name" clickable @click="form.assignee_id = u.id">
+                  <template #right-icon><van-radio :name="u.id" /></template>
+                </van-cell>
+              </template>
+            </template>
             <div v-if="filteredUsers.length === 0" class="picker-empty">无匹配人员</div>
           </van-radio-group>
         </div>
@@ -95,7 +103,7 @@
         </div>
       </van-popup>
 
-      <van-popup v-model:show="showReviewer" position="bottom" round @open="openPicker">
+      <van-popup v-model:show="showReviewer" position="bottom" round @open="onPickerOpen" @close="onPickerClose">
         <div class="picker-header">
           <span class="picker-close" @click="showReviewer = false">取消</span>
           <span class="picker-title">选择审批人</span>
@@ -104,9 +112,17 @@
         <van-search v-model="userSearch" placeholder="搜索姓名" shape="round" />
         <div class="picker-list">
           <van-radio-group v-model="form.reviewer_id">
-            <van-cell v-for="u in filteredUsers" :key="u.id" :title="u.name" clickable @click="form.reviewer_id = u.id">
-              <template #right-icon><van-radio :name="u.id" /></template>
-            </van-cell>
+            <template v-for="grp in groupedFilteredUsers" :key="grp.key">
+              <div class="picker-group-title" @click="togglePickerGroup(grp.key)">
+                <span>{{ grp.title }}</span>
+                <span class="picker-group-arrow" :class="{ folded: pickerGroupOpen[grp.key] === false }">▼</span>
+              </div>
+              <template v-if="pickerGroupOpen[grp.key] !== false">
+                <van-cell v-for="u in grp.users" :key="u.id" :title="u.name" clickable @click="form.reviewer_id = u.id">
+                  <template #right-icon><van-radio :name="u.id" /></template>
+                </van-cell>
+              </template>
+            </template>
             <div v-if="filteredUsers.length === 0" class="picker-empty">无匹配人员</div>
           </van-radio-group>
         </div>
@@ -115,7 +131,7 @@
         </div>
       </van-popup>
 
-      <van-popup v-model:show="showDepartmentHead" position="bottom" round @open="openPicker">
+      <van-popup v-model:show="showDepartmentHead" position="bottom" round @open="onPickerOpen" @close="onPickerClose">
         <div class="picker-header">
           <span class="picker-close" @click="showDepartmentHead = false">取消</span>
           <span class="picker-title">选择部门审批人</span>
@@ -124,9 +140,17 @@
         <van-search v-model="userSearch" placeholder="搜索姓名" shape="round" />
         <div class="picker-list">
           <van-radio-group v-model="form.department_head_id">
-            <van-cell v-for="u in filteredUsers" :key="u.id" :title="u.name" clickable @click="form.department_head_id = u.id">
-              <template #right-icon><van-radio :name="u.id" /></template>
-            </van-cell>
+            <template v-for="grp in groupedFilteredUsers" :key="grp.key">
+              <div class="picker-group-title" @click="togglePickerGroup(grp.key)">
+                <span>{{ grp.title }}</span>
+                <span class="picker-group-arrow" :class="{ folded: pickerGroupOpen[grp.key] === false }">▼</span>
+              </div>
+              <template v-if="pickerGroupOpen[grp.key] !== false">
+                <van-cell v-for="u in grp.users" :key="u.id" :title="u.name" clickable @click="form.department_head_id = u.id">
+                  <template #right-icon><van-radio :name="u.id" /></template>
+                </van-cell>
+              </template>
+            </template>
             <div v-if="filteredUsers.length === 0" class="picker-empty">无匹配人员</div>
           </van-radio-group>
         </div>
@@ -135,7 +159,7 @@
         </div>
       </van-popup>
 
-      <van-popup v-model:show="showCollaborators" position="bottom" round @open="openPicker">
+      <van-popup v-model:show="showCollaborators" position="bottom" round @open="onPickerOpen" @close="onPickerClose">
         <div class="picker-header">
           <span class="picker-close" @click="showCollaborators = false">取消</span>
           <span class="picker-title">选择协作者</span>
@@ -143,15 +167,21 @@
         </div>
         <van-search v-model="userSearch" placeholder="搜索姓名" shape="round" />
         <div class="picker-list">
-          <van-checkbox-group v-model="collaboratorIds">
-            <van-cell v-for="u in filteredCollaborators" :key="u.id" :title="u.name" clickable
-              @click="toggleArrayItem(collaboratorIds, u.id)">
-              <template #right-icon><van-checkbox :name="u.id" @click.stop /></template>
-            </van-cell>
+          <template v-for="grp in groupedFilteredCollaborators" :key="grp.key">
+            <div class="picker-group-title" @click="togglePickerGroup(grp.key)">
+              <span>{{ grp.title }}</span>
+              <span class="picker-group-arrow" :class="{ folded: pickerGroupOpen[grp.key] === false }">▼</span>
+            </div>
+            <template v-if="pickerGroupOpen[grp.key] !== false">
+              <div v-for="u in grp.users" :key="u.id" class="picker-item" @click="toggleArrayItem(collaboratorIds, u.id)">
+                <span class="picker-item-name">{{ u.name }}</span>
+                <span class="picker-check" :class="{ checked: collaboratorIds.includes(u.id) }">✓</span>
+              </div>
+            </template>
+          </template>
             <div v-if="filteredCollaborators.length === 0" class="picker-empty">
               {{ collaboratorCandidates.length === 0 ? '负责人、审批人已选中,无可选协作者' : '无匹配人员' }}
             </div>
-          </van-checkbox-group>
         </div>
         <div class="picker-footer">
           <van-button type="primary" block @click="showCollaborators = false">确定</van-button>
@@ -165,15 +195,13 @@
           @cancel="showDate = false" />
       </van-popup>
 
-      <van-popup v-model:show="showTags" position="bottom" round>
-        <van-checkbox-group v-model="selectedTagIds">
-          <van-cell v-for="t in allTags" :key="t.id" :title="t.name" clickable
-            @click="toggleArrayItem(selectedTagIds, t.id)">
-            <template #right-icon>
-              <van-checkbox :name="t.id" @click.stop />
-            </template>
-          </van-cell>
-        </van-checkbox-group>
+      <van-popup v-model:show="showTags" position="bottom" round @open="onPickerOpen" @close="onPickerClose">
+        <div class="picker-list">
+          <div v-for="t in allTags" :key="t.id" class="picker-item" @click="toggleArrayItem(selectedTagIds, t.id)">
+            <span class="picker-item-name">{{ t.name }}</span>
+            <span class="picker-check" :class="{ checked: selectedTagIds.includes(t.id) }">✓</span>
+          </div>
+        </div>
         <div v-if="allTags.length === 0" style="padding:24px;text-align:center;color:#969799;font-size:14px;">
           暂无标签，请先在分类设置中添加
         </div>
@@ -220,6 +248,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchUsers, createTask, fetchTags, addTagToTask, PRIORITY_LABEL, TASK_TYPE_LABEL } from '../api/task'
+import { clearCache, CACHE_KEYS } from '../utils/cache'
 
 // 创建时可选的类型(排除旧的 team 兼容值)
 const CREATE_TASK_TYPES = Object.fromEntries(
@@ -254,18 +283,101 @@ const showTags = ref(false)
 
 // 选人弹窗搜索
 const userSearch = ref('')
+// 按任务类型过滤可选人员:部门任务=全部,一值任务=仅一值,二值任务=仅二值
+function usersByTaskType(list) {
+  const t = form.value.task_type
+  if (t === 'team_a') return list.filter(u => u.duty === 'team_a_lead' || u.duty === 'team_a_member')
+  if (t === 'team_b') return list.filter(u => u.duty === 'team_b_lead' || u.duty === 'team_b_member')
+  return list
+}
 const filteredUsers = computed(() => {
   const q = userSearch.value.trim().toLowerCase()
-  if (!q) return users.value
-  return users.value.filter(u => (u.name || '').toLowerCase().includes(q))
+  const base = usersByTaskType(users.value)
+  if (!q) return base
+  return base.filter(u => (u.name || '').toLowerCase().includes(q))
 })
 const filteredCollaborators = computed(() => {
   const q = userSearch.value.trim().toLowerCase()
-  const list = collaboratorCandidates.value
-  if (!q) return list
-  return list.filter(u => (u.name || '').toLowerCase().includes(q))
+  const base = usersByTaskType(collaboratorCandidates.value)
+  if (!q) return base
+  return base.filter(u => (u.name || '').toLowerCase().includes(q))
 })
-function openPicker() { userSearch.value = '' }
+// 选人弹窗按职务分组
+const USER_GROUPS = [
+  { key: 'department_head', title: '部门主任', duties: ['department_head'] },
+  { key: 'team_a', title: '运行一值', duties: ['team_a_lead', 'team_a_member'] },
+  { key: 'team_b', title: '运行二值', duties: ['team_b_lead', 'team_b_member'] },
+  { key: 'other', title: '其他', duties: ['member', null, undefined, ''] }
+]
+// 组内排序:值长在前,员工在后,同级别按姓名
+const DUTY_ORDER_IN_GROUP = {
+  department_head: 0,
+  team_a_lead: 0, team_b_lead: 0,
+  team_a_member: 1, team_b_member: 1,
+  member: 2
+}
+function groupUsers(list) {
+  return USER_GROUPS.map(g => ({
+    ...g,
+    users: list.filter(u => g.duties.includes(u.duty)).sort((a, b) => {
+      const oa = DUTY_ORDER_IN_GROUP[a.duty] ?? 9
+      const ob = DUTY_ORDER_IN_GROUP[b.duty] ?? 9
+      if (oa !== ob) return oa - ob
+      return (a.name || '').localeCompare(b.name || '', 'zh')
+    })
+  })).filter(g => g.users.length > 0)
+}
+// 分组折叠状态
+const pickerGroupOpen = ref({})
+function togglePickerGroup(key) {
+  pickerGroupOpen.value[key] = pickerGroupOpen.value[key] === false
+}
+// 动态计算列表高度,避免被输入法遮挡
+const pickerListStyle = ref({})
+let lastVpHeight = 0
+let pickerPollTimer = null
+function updatePickerHeight(forceSmall) {
+  const vv = window.visualViewport
+  const vpHeight = vv ? vv.height : window.innerHeight
+  lastVpHeight = vpHeight
+  const headerH = 100
+  const footerH = 60
+  // 输入法弹出时预留约300px给键盘
+  const keyboardH = forceSmall ? 300 : 0
+  const avail = vpHeight - headerH - footerH - keyboardH
+  pickerListStyle.value = { maxHeight: Math.max(avail, 120) + 'px' }
+}
+function startPickerPoll() {
+  stopPickerPoll()
+  updatePickerHeight(false)
+  pickerPollTimer = setInterval(() => {
+    const vv = window.visualViewport
+    const cur = vv ? vv.height : window.innerHeight
+    if (Math.abs(cur - lastVpHeight) > 10) {
+      updatePickerHeight(false)
+    }
+  }, 150)
+}
+function stopPickerPoll() {
+  if (pickerPollTimer) { clearInterval(pickerPollTimer); pickerPollTimer = null }
+}
+function onPickerOpen() {
+  userSearch.value = ''
+  tagSearch.value = ''
+  startPickerPoll()
+}
+function onPickerClose() {
+  stopPickerPoll()
+  pickerListStyle.value = {}
+}
+function onSearchFocus() {
+  updatePickerHeight(true)
+}
+function onSearchBlur() {
+  setTimeout(() => updatePickerHeight(false), 200)
+}
+const groupedFilteredUsers = computed(() => groupUsers(filteredUsers.value))
+const groupedFilteredCollaborators = computed(() => groupUsers(filteredCollaborators.value))
 
 // 已选的负责人/审批人/部门主任的 id 集合
 const excludedIds = computed(() => {
@@ -284,6 +396,14 @@ const collaboratorCandidates = computed(() =>
 // 当负责人/审批人/部门主任变化时,自动从协作者中移除已被选为这些角色的人
 watch(excludedIds, (ids) => {
   collaboratorIds.value = collaboratorIds.value.filter(id => !ids.has(id))
+})
+
+// 任务类型切换时,清空已选的负责人/审批人/协作者(因为可选人员范围变了)
+watch(() => form.value.task_type, () => {
+  form.value.assignee_id = null
+  form.value.reviewer_id = null
+  if (form.value.task_type !== 'department') form.value.department_head_id = null
+  collaboratorIds.value = []
 })
 
 const userColumns = computed(() =>
@@ -309,11 +429,13 @@ function autoFillHead() {
 }
 
 function toggleArrayItem(arr, id) {
-  const idx = arr.value.indexOf(id)
+  // 模板里 ref 会自动解包,arr 可能是数组或 ref
+  const list = arr.value !== undefined ? arr.value : arr
+  const idx = list.indexOf(id)
   if (idx >= 0) {
-    arr.value.splice(idx, 1)
+    list.splice(idx, 1)
   } else {
-    arr.value.push(id)
+    list.push(id)
   }
 }
 
@@ -338,6 +460,8 @@ async function onSubmit() {
         try { await addTagToTask(task.id, tagId) } catch (e) {}
       }
     }
+    // 清除任务列表缓存,确保返回列表时能看到新任务
+    clearCache(CACHE_KEYS.TASKS)
     // 成功：直接在当前页面切换到成功页，不跳转不弹窗
     successTitle.value = form.value.title
     success.value = true
@@ -372,7 +496,35 @@ onMounted(async () => {
 .picker-close { color: #969799; font-size: 15px; cursor: pointer; }
 .picker-title { font-size: 16px; font-weight: 600; color: #323233; }
 .picker-placeholder { width: 32px; }
-.picker-list { max-height: 45vh; overflow-y: auto; }
+.picker-list { max-height: 150px; overflow-y: auto; }
+.picker-group-title {
+  padding: 10px 16px; font-size: 13px; font-weight: 600;
+  color: #969799; background: #f7f8fa;
+  display: flex; align-items: center; justify-content: space-between;
+  cursor: pointer;
+}
+.picker-group-arrow {
+  font-size: 11px; color: #969799;
+  transition: transform 0.2s;
+}
+.picker-group-arrow.folded {
+  transform: rotate(-90deg);
+}
+.picker-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; background: #fff; border-bottom: 1px solid #f2f3f5;
+  cursor: pointer;
+}
+.picker-item:active { background: #f7f8fa; }
+.picker-item-name { font-size: 15px; color: #323233; }
+.picker-check {
+  width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid #dcdee0;
+  color: transparent; display: flex; align-items: center; justify-content: center;
+  font-size: 12px; flex-shrink: 0; transition: all 0.15s;
+}
+.picker-check.checked {
+  background: #4472C4; border-color: #4472C4; color: #fff;
+}
 .picker-empty { padding: 32px 16px; text-align: center; color: #969799; font-size: 14px; }
 .picker-footer { padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); border-top: 1px solid #ebedf0; }
 </style>

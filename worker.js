@@ -505,109 +505,6 @@ async function requireUser(c, next) {
 // ============================================================
 app.get('/api/health', (c) => c.json({ ok: true }))
 
-// 调试接口：验证钉钉配置（排查 40078 corpId 不匹配）
-app.get('/api/debug/dingtalk', async (c) => {
-  const result = {
-    corpId: env(c, 'DINGTALK_CORP_ID'),
-    appKey: env(c, 'DINGTALK_APP_KEY') ? env(c, 'DINGTALK_APP_KEY').slice(0, 8) + '***' : null,
-    agentId: env(c, 'APP_AGENT_ID'),
-    accessTokenOk: false,
-    deptListResp: null,
-    deptDetail: null,
-    userList: null,
-    firstUserDetail: null,
-    orgInfo: null,
-    jsapiTicketOk: false,
-    appInfo: null,
-    error: null
-  }
-  try {
-    const token = await getDingtalkAccessToken(c)
-    result.accessTokenOk = !!token
-    // 1) 获取部门列表，验证 access_token 是否真的有企业上下文
-    const r1 = await fetch(`https://oapi.dingtalk.com/topapi/v2/department/listsub?access_token=${token}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dept_id: 1 })
-    })
-    result.deptListResp = await r1.json()
-    // 2) 获取 jsapi_ticket，验证 access_token 完整可用
-    const r2 = await fetch(`https://oapi.dingtalk.com/get_jsapi_ticket?access_token=${token}`)
-    const d2 = await r2.json()
-    result.jsapiTicketOk = d2.errcode === 0
-    // 3) 获取根部门详情，看是否能从中拿到企业 corpId
-    const r3 = await fetch(`https://oapi.dingtalk.com/topapi/v2/department/get?access_token=${token}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dept_id: 1 })
-    })
-    result.deptDetail = await r3.json()
-    // 4) 尝试获取应用详情（含所属 corpId）
-    const agentId = env(c, 'APP_AGENT_ID')
-    if (agentId) {
-      const r4 = await fetch(`https://oapi.dingtalk.com/topapi/v2/microapp/get?access_token=${token}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentId: Number(agentId) })
-      })
-      result.appInfo = await r4.json().catch(() => null)
-    }
-    // 5) 获取用户列表，看第一个用户详情是否含 corpId
-    const r5 = await fetch(`https://oapi.dingtalk.com/topapi/v2/user/list?access_token=${token}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dept_id: 1, cursor: 0, size: 1 })
-    })
-    const userList = await r5.json()
-    result.userList = userList
-    if (userList.result?.list?.[0]?.userid) {
-      const r6 = await fetch(`https://oapi.dingtalk.com/topapi/v2/user/get?access_token=${token}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userid: userList.result.list[0].userid })
-      })
-      result.firstUserDetail = await r6.json()
-    }
-    // 6) 尝试新版 API 获取组织信息（含 corpId）
-    const r7 = await fetch('https://api.dingtalk.com/v1.0/contact/organizations?deptId=1', {
-      headers: { 'x-acs-dingtalk-access-token': token }
-    })
-    result.orgInfo = await r7.json().catch(() => null)
-  } catch (e) {
-    result.error = e.message
-  }
-  return c.json(result)
-})
-
-// 调试接口：用前端传来的真实 authCode 调 getuserinfo，返回完整响应（排查 40078）
-app.post('/api/debug/test-code', async (c) => {
-  const { authCode } = await c.req.json().catch(() => ({}))
-  const result = {
-    authCodeLen: authCode ? authCode.length : 0,
-    authCodePreview: authCode ? authCode.slice(0, 4) + '...' + authCode.slice(-4) : null,
-    corpId: env(c, 'DINGTALK_CORP_ID'),
-    appKey: env(c, 'DINGTALK_APP_KEY') ? env(c, 'DINGTALK_APP_KEY').slice(0, 8) + '***' : null,
-    tokenCacheExpire: tokenCache.expire,
-    tokenFromCache: !!(tokenCache.token && Date.now() < tokenCache.expire - 60000),
-    getuserinfoResp: null,
-    error: null
-  }
-  try {
-    if (!authCode) { result.error = 'no_authCode'; return c.json(result) }
-    const token = await getDingtalkAccessToken(c)
-    result.tokenFromCache = !!(tokenCache.token && token === tokenCache.token)
-    const res = await fetch(`https://oapi.dingtalk.com/topapi/v2/user/getuserinfo?access_token=${token}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: authCode })
-    })
-    result.getuserinfoResp = await res.json()
-  } catch (e) {
-    result.error = e.message
-  }
-  return c.json(result)
-})
-
 app.get('/api/auth/config', (c) => c.json({
   corpId: env(c, 'DINGTALK_CORP_ID'),
   appKey: env(c, 'DINGTALK_APP_KEY')
@@ -782,25 +679,12 @@ app.get('/api/tasks', requireUser, async (c) => {
       || (t.description || '').toLowerCase().includes(keyword)
     const filterKw = (list) => (list || []).filter(matchKeyword)
 
-    const myAssigns = await adminFetch(c, `task_assignees?select=task_id&user_id=eq.${userId}`)
-    const myTaskIds = (myAssigns || []).map(a => a.task_id)
-
-    const idList = myTaskIds.length
-      ? myTaskIds.map(id => `id.eq.${id}`).join(',')
-      : 'id.eq.00000000-0000-0000-0000-000000000000'
-    let orCond = `creator_id.eq.${userId},assignee_id.eq.${userId},reviewer_id.eq.${userId},${idList}`
-
     // select 带 department_head join + tags(department_head_id 列可能不存在,失败时回退)
     const selectClause = `select=*,creator:users!tasks_creator_id_fkey(id,name,avatar_url),assignee:users!tasks_assignee_id_fkey(id,name,avatar_url),reviewer:users!tasks_reviewer_id_fkey(id,name,avatar_url),department_head:users!tasks_department_head_id_fkey(id,name,avatar_url),tags:task_tags(tag_id,tag:tags(id,name,color))`
     const selectClauseFallback = `select=*,creator:users!tasks_creator_id_fkey(id,name,avatar_url),assignee:users!tasks_assignee_id_fkey(id,name,avatar_url),reviewer:users!tasks_reviewer_id_fkey(id,name,avatar_url),tags:task_tags(tag_id,tag:tags(id,name,color))`
 
     if (status === 'todo') {
       // "待办"智能过滤:当前用户需要操作的任务(条件本身已限定用户,无需再叠加 orCond)
-      // - 我是负责人 AND 状态是 todo
-      // - 我是负责人 AND 状态是 rejected
-      // - 我是审批人 AND 状态是 pending_review
-      // - 我是创建人 AND 状态是 done AND task_type=team(班组任务创建人可关闭)
-      // - 我是部门主任 AND 状态是 done AND task_type=department(部门任务由部门主任关闭)
       const todoCond = [
         `and(assignee_id.eq.${userId},status.eq.todo)`,
         `and(assignee_id.eq.${userId},status.eq.rejected)`,
@@ -808,12 +692,11 @@ app.get('/api/tasks', requireUser, async (c) => {
         `and(creator_id.eq.${userId},status.eq.done,task_type.in.(team,team_a,team_b))`,
         `and(department_head_id.eq.${userId},status.eq.done,task_type.eq.department)`
       ].join(',')
-      const todoUrl = `tasks?${selectClause}&or=(${todoCond})&order=created_at.desc`
+      const todoUrl = `tasks?${selectClause}&deleted_at=is.null&or=(${todoCond})&order=created_at.desc`
       try {
         const data = await adminFetch(c, todoUrl)
         return c.json(filterKw(data))
       } catch (e) {
-        // task_type/department_head_id 列可能不存在,回退:去掉相关条件,且不带 department_head join
         const todoFallback = [
           `and(assignee_id.eq.${userId},status.eq.todo)`,
           `and(assignee_id.eq.${userId},status.eq.rejected)`,
@@ -825,16 +708,15 @@ app.get('/api/tasks', requireUser, async (c) => {
       }
     }
 
-    // 其他状态:用户相关 + 状态过滤
-    let url = `tasks?${selectClause}&or=(${orCond})&order=created_at.desc`
+    // 其他状态:所有人可见全部任务,仅按状态+关键词过滤
+    let url = `tasks?${selectClause}&deleted_at=is.null&order=created_at.desc`
     if (status && status !== 'all') url += `&status=eq.${status}`
 
     try {
       const data = await adminFetch(c, url)
       return c.json(filterKw(data))
     } catch (e) {
-      // department_head_id 列可能不存在,回退不带 department_head join
-      let fallbackUrl = `tasks?${selectClauseFallback}&or=(${orCond})&order=created_at.desc`
+      let fallbackUrl = `tasks?${selectClauseFallback}&order=created_at.desc`
       if (status && status !== 'all') fallbackUrl += `&status=eq.${status}`
       const data = await adminFetch(c, fallbackUrl)
       return c.json(filterKw(data))
@@ -849,19 +731,12 @@ app.get('/api/tasks', requireUser, async (c) => {
 app.get('/api/tasks/counts', requireUser, async (c) => {
   try {
     const userId = c.get('userId')
-    const myAssigns = await adminFetch(c, `task_assignees?select=task_id&user_id=eq.${userId}`)
-    const myTaskIds = (myAssigns || []).map(a => a.task_id)
-    const idList = myTaskIds.length
-      ? myTaskIds.map(id => `id.eq.${id}`).join(',')
-      : 'id.eq.00000000-0000-0000-0000-000000000000'
-    const orCond = `creator_id.eq.${userId},assignee_id.eq.${userId},reviewer_id.eq.${userId},${idList}`
 
     // 用最简 select 避免外键关系不存在导致报错
     const selectClause = `select=*`
 
-    // 全部任务计数
-    let allUrl = `tasks?${selectClause}&or=(${orCond})`
-    // 用 select=count 方式获取总数不行,直接查所有再前端算
+    // 全部任务计数:所有人可见全部任务(排除已删除)
+    let allUrl = `tasks?${selectClause}&deleted_at=is.null`
     const allData = await adminFetch(c, allUrl) || []
 
     const counts = {
@@ -1096,7 +971,7 @@ app.put('/api/tasks/:id', requireUser, async (c) => {
   }
 })
 
-// 删除(仅创建人/管理员可删)
+// 删除(软删除,仅创建人/管理员可删)
 app.delete('/api/tasks/:id', requireUser, async (c) => {
   try {
     const userId = c.get('userId')
@@ -1115,10 +990,87 @@ app.delete('/api/tasks/:id', requireUser, async (c) => {
     const canDelete = isAdmin || t.creator_id === userId
     if (!canDelete) return c.json({ message: '只有创建人或管理员能删除' }, 403)
 
-    await adminFetch(c, `tasks?id=eq.${id}`, { method: 'DELETE' })
+    // 软删除:设置 deleted_at
+    await adminFetch(c, `tasks?id=eq.${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ deleted_at: new Date().toISOString() })
+    })
+    // 记录日志
+    await adminFetch(c, 'task_logs', {
+      method: 'POST',
+      body: JSON.stringify({ task_id: id, operator_id: userId, action: 'delete', detail: { soft: true } })
+    })
     return c.json({ ok: true })
   } catch (e) {
     console.error('[delete task]', e)
+    return c.json({ message: e.message }, 500)
+  }
+})
+
+// 回收站列表(仅管理员/超管)
+app.get('/api/tasks/recycle/list', requireUser, async (c) => {
+  try {
+    const userId = c.get('userId')
+    const adminCheck = await adminFetch(c, `users?id=eq.${userId}&select=is_admin`)
+    const isAdmin = adminCheck && adminCheck.length && adminCheck[0].is_admin === true
+    if (!isAdmin) return c.json({ message: '无权限' }, 403)
+
+    const selectClause = `select=*,creator:users!tasks_creator_id_fkey(id,name),assignee:users!tasks_assignee_id_fkey(id,name)`
+    // 自动清除超过1年的回收站任务
+    const oneYearAgo = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString()
+    await adminFetch(c, `tasks?deleted_at=lt.${oneYearAgo}`, { method: 'DELETE' })
+
+    const data = await adminFetch(c, `tasks?${selectClause}&deleted_at=not.is.null&order=deleted_at.desc`) || []
+    return c.json(data)
+  } catch (e) {
+    console.error('[recycle list]', e)
+    return c.json({ message: e.message }, 500)
+  }
+})
+
+// 恢复任务(仅管理员/超管)
+app.post('/api/tasks/:id/restore', requireUser, async (c) => {
+  try {
+    const userId = c.get('userId')
+    const id = c.req.param('id')
+    const adminCheck = await adminFetch(c, `users?id=eq.${userId}&select=is_admin`)
+    const isAdmin = adminCheck && adminCheck.length && adminCheck[0].is_admin === true
+    if (!isAdmin) return c.json({ message: '无权限' }, 403)
+
+    await adminFetch(c, `tasks?id=eq.${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ deleted_at: null })
+    })
+    await adminFetch(c, 'task_logs', {
+      method: 'POST',
+      body: JSON.stringify({ task_id: id, operator_id: userId, action: 'restore' })
+    })
+    return c.json({ ok: true })
+  } catch (e) {
+    console.error('[restore task]', e)
+    return c.json({ message: e.message }, 500)
+  }
+})
+
+// 彻底删除任务(仅管理员/超管)
+app.delete('/api/tasks/:id/permanent', requireUser, async (c) => {
+  try {
+    const userId = c.get('userId')
+    const id = c.req.param('id')
+    const adminCheck = await adminFetch(c, `users?id=eq.${userId}&select=is_admin`)
+    const isAdmin = adminCheck && adminCheck.length && adminCheck[0].is_admin === true
+    if (!isAdmin) return c.json({ message: '无权限' }, 403)
+
+    // 删除关联数据
+    await adminFetch(c, `task_assignees?task_id=eq.${id}`, { method: 'DELETE' })
+    await adminFetch(c, `task_tags?task_id=eq.${id}`, { method: 'DELETE' })
+    await adminFetch(c, `task_attachments?task_id=eq.${id}`, { method: 'DELETE' })
+    await adminFetch(c, `task_comments?task_id=eq.${id}`, { method: 'DELETE' })
+    await adminFetch(c, `task_logs?task_id=eq.${id}`, { method: 'DELETE' })
+    await adminFetch(c, `tasks?id=eq.${id}`, { method: 'DELETE' })
+    return c.json({ ok: true })
+  } catch (e) {
+    console.error('[permanent delete task]', e)
     return c.json({ message: e.message }, 500)
   }
 })
@@ -1286,60 +1238,64 @@ app.post('/api/tasks/:id/quick-complete', requireUser, async (c) => {
   }
 })
 
-// 当前登录用户信息(含 is_admin)
+// 当前登录用户信息(含 is_admin / is_super_admin)
 app.get('/api/me', requireUser, async (c) => {
   const userId = c.get('userId')
-  // duty 列可能还没加(见 sql/migration_v3.sql),失败时回退
+  // is_super_admin / duty 列可能还没加,失败时回退
   try {
-    const data = await adminFetch(c, `users?id=eq.${userId}&select=id,name,avatar_url,is_admin,dingtalk_user_id,duty`)
-    const user = data && data.length ? data[0] : { id: userId, name: '未知用户', is_admin: false, duty: 'member' }
+    const data = await adminFetch(c, `users?id=eq.${userId}&select=id,name,avatar_url,is_admin,is_super_admin,dingtalk_user_id,duty`)
+    const user = data && data.length ? { is_super_admin: false, ...data[0] } : { id: userId, name: '未知用户', is_admin: false, is_super_admin: false, duty: 'member' }
     return c.json(user)
   } catch (e) {
     try {
-      const data = await adminFetch(c, `users?id=eq.${userId}&select=id,name,avatar_url,is_admin,dingtalk_user_id`)
-      const user = data && data.length ? { duty: 'member', ...data[0] } : { id: userId, name: '未知用户', is_admin: false, duty: 'member' }
+      const data = await adminFetch(c, `users?id=eq.${userId}&select=id,name,avatar_url,is_admin,dingtalk_user_id,duty`)
+      const user = data && data.length ? { is_super_admin: false, ...data[0] } : { id: userId, name: '未知用户', is_admin: false, is_super_admin: false, duty: 'member' }
       return c.json(user)
     } catch (e2) {
-      return c.json({ id: userId, name: '未知用户', is_admin: false, duty: 'member' }, 200)
+      return c.json({ id: userId, name: '未知用户', is_admin: false, is_super_admin: false, duty: 'member' }, 200)
     }
   }
 })
 
 // users
 app.get('/api/users', requireUser, async (c) => {
-  // duty 列可能还没加,失败时回退
+  // is_super_admin / duty / sort_order 列可能还没加,失败时回退
   let data = null
   try {
-    data = await adminFetch(c, 'users?select=id,name,avatar_url,dingtalk_user_id,duty,is_admin&order=name.asc')
+    data = await adminFetch(c, 'users?select=id,name,avatar_url,dingtalk_user_id,duty,is_admin,is_super_admin,sort_order&order=sort_order.asc,name.asc')
   } catch (e) {
-    data = await adminFetch(c, 'users?select=id,name,avatar_url,dingtalk_user_id,is_admin&order=name.asc')
+    try {
+      data = await adminFetch(c, 'users?select=id,name,avatar_url,dingtalk_user_id,duty,is_admin&order=name.asc')
+    } catch (e2) {
+      data = await adminFetch(c, 'users?select=id,name,avatar_url,dingtalk_user_id,is_admin&order=name.asc')
+    }
   }
-  // 过滤掉“调试登录”产生的 mock 账号,避免出现在成员选择列表(它们也收不到钉钉通知)
-  const list = (data || []).filter(u => !String(u.dingtalk_user_id || '').startsWith('mock_'))
+  // 过滤掉"调试登录"产生的 mock 账号,避免出现在成员选择列表(它们也收不到钉钉通知)
+  const list = (data || []).map(u => ({ is_super_admin: false, sort_order: 0, ...u })).filter(u => !String(u.dingtalk_user_id || '').startsWith('mock_'))
   return c.json(list)
 })
 
 // ============================================================
 // 职务(部门主任 / 值长)与每日提醒
 // ============================================================
-const DUTY_VALUES = ['department_head', 'team_a_lead', 'team_b_lead', 'member']
+const DUTY_VALUES = ['department_head', 'team_a_lead', 'team_b_lead', 'team_a_member', 'team_b_member', 'member']
 // 任务分类 → 对应职务(用于建任务时自动带出部门负责人)
 // 注意:只有「部门任务」会自动带出负责人。部门任务的 department_head_id 就是"部门审批人"。
 //      运行一值/二值 的班组任务,负责人是下面单独选的,不在这里兜底,避免改动原有创建流程。
 const TYPE_TO_DUTY = { department: 'department_head' }
 const DIGEST_TYPES = ['department', 'team_a', 'team_b']
 
-// 读当前用户的权限信息(is_admin / duty),duty 列不存在时按 member 处理
+// 读当前用户的权限信息(is_admin / is_super_admin / duty),列不存在时按默认值处理
 async function getActor(c, userId) {
   try {
-    const d = await adminFetch(c, `users?id=eq.${userId}&select=id,is_admin,duty`)
-    return d && d[0] ? d[0] : { id: userId, is_admin: false, duty: 'member' }
+    const d = await adminFetch(c, `users?id=eq.${userId}&select=id,is_admin,is_super_admin,duty`)
+    return d && d[0] ? { is_super_admin: false, ...d[0] } : { id: userId, is_admin: false, is_super_admin: false, duty: 'member' }
   } catch (e) {
     try {
-      const d = await adminFetch(c, `users?id=eq.${userId}&select=id,is_admin`)
-      return d && d[0] ? { ...d[0], duty: 'member' } : { id: userId, is_admin: false, duty: 'member' }
+      const d = await adminFetch(c, `users?id=eq.${userId}&select=id,is_admin,duty`)
+      return d && d[0] ? { is_super_admin: false, ...d[0] } : { id: userId, is_admin: false, is_super_admin: false, duty: 'member' }
     } catch (e2) {
-      return { id: userId, is_admin: false, duty: 'member' }
+      return { id: userId, is_admin: false, is_super_admin: false, duty: 'member' }
     }
   }
 }
@@ -1379,18 +1335,115 @@ app.put('/api/users/:id/duty', requireUser, async (c) => {
   }
 })
 
-// 设置/取消管理员(仅管理员)
+// 设置/取消管理员
+// 规则:
+//   - 只有管理员可以操作
+//   - 超级管理员不能取消自己的管理员身份
+//   - 普通管理员不能取消自己的管理员身份
+//   - 超级管理员可以取消其他管理员(包括其他超级管理员)的管理员身份
 app.put('/api/users/:id/admin', requireUser, async (c) => {
   const actor = await getActor(c, c.get('userId'))
   if (actor.is_admin !== true) return c.json({ message: '只有管理员可以设置管理员' }, 403)
   const body = await c.req.json().catch(() => ({}))
   const isAdmin = body.is_admin === true
+  const targetId = c.req.param('id')
+  // 不能取消自己的管理员身份(无论超级还是普通)
+  if (targetId === String(actor.id) && isAdmin === false) {
+    return c.json({ message: '不能取消自己的管理员身份' }, 403)
+  }
   try {
-    await adminFetch(c, `users?id=eq.${c.req.param('id')}`, {
+    await adminFetch(c, `users?id=eq.${targetId}`, {
       method: 'PATCH',
       body: JSON.stringify({ is_admin: isAdmin })
     })
     return c.json({ ok: true, is_admin: isAdmin })
+  } catch (e) {
+    return c.json({ message: e.message }, 500)
+  }
+})
+
+// 设置/取消超级管理员
+// 规则:
+//   - 系统里没有超级管理员时,任何管理员可把自己设为超级管理员
+//   - 已有超级管理员时,只有超级管理员可设置/取消其他超级管理员
+//   - 超级管理员不能取消自己的超级管理员身份
+app.put('/api/users/:id/super-admin', requireUser, async (c) => {
+  const actor = await getActor(c, c.get('userId'))
+  if (actor.is_admin !== true) return c.json({ message: '只有管理员可以操作' }, 403)
+  const body = await c.req.json().catch(() => ({}))
+  const isSuper = body.is_super_admin === true
+  const targetId = c.req.param('id')
+
+  // 查系统里是否已有超级管理员
+  let hasSuper = false
+  try {
+    const supers = await adminFetch(c, 'users?is_super_admin=eq.true&select=id&limit=1')
+    hasSuper = supers && supers.length > 0
+  } catch (e) {}
+
+  // 不能取消自己的超级管理员身份
+  if (targetId === String(actor.id) && isSuper === false) {
+    return c.json({ message: '不能取消自己的超级管理员身份' }, 403)
+  }
+
+  // 权限判断
+  if (hasSuper) {
+    // 已有超级管理员,只有超级管理员可操作
+    if (actor.is_super_admin !== true) {
+      return c.json({ message: '只有超级管理员可以设置超级管理员' }, 403)
+    }
+  } else {
+    // 没有超级管理员,只允许把自己设为超级管理员
+    if (targetId !== String(actor.id)) {
+      return c.json({ message: '系统暂无超级管理员,只能将自己设为超级管理员' }, 403)
+    }
+  }
+
+  try {
+    await adminFetch(c, `users?id=eq.${targetId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ is_super_admin: isSuper })
+    })
+    return c.json({ ok: true, is_super_admin: isSuper })
+  } catch (e) {
+    return c.json({ message: e.message }, 500)
+  }
+})
+
+// 批量更新成员排序(仅管理员)
+// body: { orders: [{ id, sort_order }, ...] }
+app.put('/api/users/sort', requireUser, async (c) => {
+  const actor = await getActor(c, c.get('userId'))
+  if (actor.is_admin !== true) return c.json({ message: '只有管理员可以排序' }, 403)
+  const body = await c.req.json().catch(() => ({}))
+  const orders = Array.isArray(body.orders) ? body.orders : []
+  if (orders.length === 0) return c.json({ message: '参数错误' }, 400)
+  try {
+    for (const item of orders) {
+      await adminFetch(c, `users?id=eq.${item.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ sort_order: item.sort_order })
+      })
+    }
+    return c.json({ ok: true })
+  } catch (e) {
+    return c.json({ message: e.message }, 500)
+  }
+})
+
+// 修改成员姓名(仅管理员):用于修正钉钉同步异常的姓名(如"？？？")
+app.put('/api/users/:id/name', requireUser, async (c) => {
+  const actor = await getActor(c, c.get('userId'))
+  if (actor.is_admin !== true) return c.json({ message: '只有管理员可以修改姓名' }, 403)
+  const body = await c.req.json().catch(() => ({}))
+  const name = (body.name || '').trim()
+  if (!name) return c.json({ message: '姓名不能为空' }, 400)
+  try {
+    await adminFetch(c, `users?id=eq.${c.req.param('id')}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name })
+    })
+    return c.json({ ok: true, name })
   } catch (e) {
     return c.json({ message: e.message }, 500)
   }
@@ -1600,8 +1653,34 @@ app.delete('/api/tasks/:id/comments/:cid', requireUser, async (c) => {
 // ============================================================
 // 标签
 // ============================================================
+
+// 预设分类（确保存在，被删也会自动恢复）
+const PRESET_TAGS = [
+  { name: '运行一值员工', color: '#4472C4' },
+  { name: '运行二值员工', color: '#07c160' }
+]
+
+// 仅在系统完全没有标签时初始化预设标签(用户删除后不会自动恢复)
+async function ensurePresetTags(c) {
+  try {
+    const existing = await adminFetch(c, 'tags?select=name&limit=1')
+    if (existing && existing.length > 0) return
+    for (const t of PRESET_TAGS) {
+      try {
+        await adminFetch(c, 'tags', {
+          method: 'POST',
+          body: JSON.stringify({ name: t.name, color: t.color })
+        })
+      } catch (e) {}
+    }
+  } catch (e) {
+    console.warn('[ensurePresetTags]', e.message)
+  }
+}
+
 app.get('/api/tags', requireUser, async (c) => {
   try {
+    await ensurePresetTags(c)
     const data = await adminFetch(c, 'tags?select=id,name,color&order=name.asc')
     // 查每个标签关联了多少任务
     let counts = {}

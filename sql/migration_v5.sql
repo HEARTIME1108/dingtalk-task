@@ -1,0 +1,3 @@
+-- 回收站功能:任务软删除
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_tasks_deleted_at ON tasks(deleted_at);

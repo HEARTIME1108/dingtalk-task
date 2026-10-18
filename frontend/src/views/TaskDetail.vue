@@ -229,6 +229,7 @@ import {
   STATUS_LABEL, STATUS_COLOR, PRIORITY_LABEL, PRIORITY_COLOR, TASK_TYPE_LABEL
 } from '../api/task'
 import { userStore, loadUser } from '../stores/user'
+import { clearCache, CACHE_KEYS } from '../utils/cache'
 
 const route = useRoute()
 const router = useRouter()
@@ -405,6 +406,8 @@ async function confirmTransition() {
   try {
     await transitionTask(task.value.id, task.value.status, pendingTo.value, comment.value, pendingAttachments.value)
     pendingAttachments.value = []
+    // 状态变更后清除列表缓存,确保返回列表时数据最新
+    clearCache(CACHE_KEYS.TASKS)
     await load()
     successMsg.value = '操作成功！任务状态已更新'
   } catch (e) {
@@ -448,6 +451,8 @@ async function doDelete() {
   errorMsg.value = ''
   try {
     await deleteTask(task.value.id)
+    // 删除后清除列表缓存
+    clearCache(CACHE_KEYS.TASKS)
     // 删除成功后跳转回列表
     router.replace('/tasks')
   } catch (e) {

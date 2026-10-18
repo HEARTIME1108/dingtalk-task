@@ -23,6 +23,9 @@ function withTimeout(promise, ms, msg) {
 /**
  * 请求免登授权码 authCode（用 JSAPI）
  *
+ * @param {string} corpId 企业 corpId
+ * @param {Promise<object>|undefined} jsapiConfigPromise 预取的 jsapi 配置 Promise（可选，用于并行优化）
+ *
  * 【为什么清缓存后会 40078】
  * 清除缓存后钉钉 WebView 冷启动，原生桥(native bridge)需要重建。
  * 仅等待 dd.ready() 不够 —— 清缓存后 JSAPI 的鉴权状态也被清掉了，
@@ -34,7 +37,7 @@ function withTimeout(promise, ms, msg) {
  * 2. 等 dd.ready 后再取码
  * 3. 取码后由 Login.vue 在 40078 时重试
  */
-export async function requestAuthCode(corpId) {
+export async function requestAuthCode(corpId, jsapiConfigPromise) {
   if (!isInDingTalk()) {
     throw new Error('NOT_IN_DINGTALK')
   }
@@ -73,7 +76,8 @@ export async function requestAuthCode(corpId) {
   // ★ 关键：先 dd.config 鉴权。清缓存后必须重新鉴权，否则取到的 code 无效
   try {
     const pageUrl = location.href.split('#')[0]
-    const cfg = await getJsapiConfig(pageUrl)
+    // 优先使用外部预取的配置（与 corpId 获取并行），否则现场取
+    const cfg = jsapiConfigPromise ? await jsapiConfigPromise : await getJsapiConfig(pageUrl)
     await new Promise((resolve, reject) => {
       try {
         dd.config({
@@ -95,7 +99,7 @@ export async function requestAuthCode(corpId) {
     try {
       await withTimeout(new Promise((resolve) => {
         try { dd.ready(() => resolve('ready')) } catch { resolve('ready_error') }
-      }), 5000, 'ready_timeout')
+      }), 3000, 'ready_timeout')
     } catch {}
   }
 

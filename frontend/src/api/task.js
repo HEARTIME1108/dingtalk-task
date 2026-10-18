@@ -119,11 +119,13 @@ export async function fetchUsers() {
   return apiCall('/users')
 }
 
-// 职务(部门主任 / 值长):仅管理员可设置
+// 职务(部门主任 / 值长 / 值员工):仅管理员可设置
 export const DUTY_LABEL = {
   department_head: '部门主任',
   team_a_lead: '运行一值值长',
   team_b_lead: '运行二值值长',
+  team_a_member: '运行一值员工',
+  team_b_member: '运行二值员工',
   member: '员工'
 }
 export async function updateUserDuty(userId, duty) {
@@ -133,6 +135,21 @@ export async function updateUserDuty(userId, duty) {
 // 设置/取消管理员:仅管理员可操作
 export async function updateUserAdmin(userId, isAdmin) {
   return apiCall(`/users/${userId}/admin`, { method: 'PUT', body: JSON.stringify({ is_admin: isAdmin }) })
+}
+
+// 设置/取消超级管理员
+export async function updateUserSuperAdmin(userId, isSuper) {
+  return apiCall(`/users/${userId}/super-admin`, { method: 'PUT', body: JSON.stringify({ is_super_admin: isSuper }) })
+}
+
+// 批量更新成员排序: orders = [{ id, sort_order }, ...]
+export async function updateUserSort(orders) {
+  return apiCall('/users/sort', { method: 'PUT', body: JSON.stringify({ orders }) })
+}
+
+// 修改成员姓名:仅管理员可操作
+export async function updateUserName(userId, name) {
+  return apiCall(`/users/${userId}/name`, { method: 'PUT', body: JSON.stringify({ name }) })
 }
 
 // 每日未完成工作提醒配置(管理员 + 部门主任可配置)
@@ -168,6 +185,17 @@ export async function updateTask(id, payload) {
 
 export async function deleteTask(id) {
   return apiCall(`/tasks/${id}`, { method: 'DELETE' })
+}
+
+// 回收站
+export async function getRecycleTasks() {
+  return apiCall('/tasks/recycle/list')
+}
+export async function restoreTask(id) {
+  return apiCall(`/tasks/${id}/restore`, { method: 'POST' })
+}
+export async function permanentDeleteTask(id) {
+  return apiCall(`/tasks/${id}/permanent`, { method: 'DELETE' })
 }
 
 export async function quickCompleteTask(id, comment) {

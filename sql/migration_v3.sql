@@ -5,9 +5,10 @@
 
 -- 1. 给用户加「职务」字段
 --    department_head 部门主任 / team_a_lead 运行一值值长
---    team_b_lead   运行二值值长 / member 员工
+--    team_b_lead   运行二值值长 / team_a_member 运行一值员工
+--    team_b_member 运行二值员工 / member 员工
 alter table public.users add column if not exists duty varchar(20) default 'member';
-comment on column public.users.duty is '职务:department_head 部门主任 / team_a_lead 运行一值值长 / team_b_lead 运行二值值长 / member 员工';
+comment on column public.users.duty is '职务:department_head 部门主任 / team_a_lead 运行一值值长 / team_b_lead 运行二值值长 / team_a_member 运行一值员工 / team_b_member 运行二值员工 / member 员工';
 
 -- 2. 每日未完成工作提醒:每人一条配置
 create table if not exists public.daily_digest_settings (

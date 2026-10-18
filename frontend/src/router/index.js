@@ -41,6 +41,11 @@ const routes = [
     path: '/tasks/:id/edit', name: 'taskEdit',
     component: () => import('../views/TaskEdit.vue'),
     meta: { requiresAuth: true, title: '编辑任务' }
+  },
+  {
+    path: '/recycle', name: 'recycle',
+    component: () => import('../views/Recycle.vue'),
+    meta: { requiresAuth: true, title: '回收站' }
   }
 ]
 

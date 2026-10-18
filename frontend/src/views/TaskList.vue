@@ -210,6 +210,7 @@ import {
   STATUS_LABEL, STATUS_COLOR, PRIORITY_LABEL, PRIORITY_COLOR, TASK_TYPE_LABEL
 } from '../api/task'
 import { userStore, loadUser } from '../stores/user'
+import { getCache, setCache, CACHE_KEYS } from '../utils/cache'
 
 const route = useRoute()
 const router = useRouter()
@@ -523,8 +524,10 @@ async function loadCounts() {
   } catch (e) {}
 }
 
-async function load() {
-  loading.value = true
+async function load(silent = false) {
+  if (!silent) {
+    loading.value = true
+  }
   errorMsg.value = ''
   swipeOpenId.value = null
   try {
@@ -553,27 +556,34 @@ async function load() {
       }
     }
     tagCounts.value = tc
-    // 4) 视图模式:「进行中」视图隐藏已完成/已关闭任务
+    // 4) 缓存原始任务列表 + 计数 + 标签计数(下次进入秒开)
+    setCache(CACHE_KEYS.TASKS, { tasks: list, counts: c, tagCounts: tc })
+    // 5) 视图模式:「进行中」视图隐藏已完成/已关闭任务
     if (viewMode.value === 'active') {
       list = list.filter(t => t.status !== 'done' && t.status !== 'closed')
     }
-    // 5) 按状态过滤
+    // 6) 按状态过滤
     if (active.value !== 'all') {
       list = list.filter(t => t.status === active.value)
     }
-    // 6) 按任务周期过滤(日/周/月/季/年)
+    // 7) 按任务周期过滤(日/周/月/季/年)
     if (activePriority.value !== 'all') {
       list = list.filter(t => t.priority === activePriority.value)
     }
-    // 7) 按标签过滤
+    // 8) 按标签过滤
     if (activeTag.value) {
       list = list.filter(t => t.tags?.some(tg => (tg.tag_id || tg.id) === activeTag.value))
     }
     tasks.value = list
   } catch (e) {
-    errorMsg.value = '加载失败：' + (e.message || '未知错误')
+    // 后台刷新失败时不弹错(缓存还在展示),手动刷新才提示
+    if (!silent) {
+      errorMsg.value = '加载失败：' + (e.message || '未知错误')
+    }
   } finally {
-    loading.value = false
+    if (!silent) {
+      loading.value = false
+    }
   }
 }
 
@@ -842,14 +852,31 @@ const activeChips = computed(() => {
 
 onMounted(async () => {
   window.addEventListener('scroll', onPageScroll, { passive: true })
-  try {
-    allTags.value = await fetchTags()
-  } catch (e) {}
-  // 加载当前用户(用于左滑快捷操作的角色判断)
-  if (!userStore.user) {
-    try { await loadUser() } catch (e) {}
+
+  // 1) 秒开:先从本地缓存读出任务 + 计数 + 标签,立即展示(无需等网络)
+  const cachedTasks = getCache(CACHE_KEYS.TASKS)
+  if (cachedTasks?.tasks?.length) {
+    tasks.value = cachedTasks.tasks
+    if (cachedTasks.counts) counts.value = cachedTasks.counts
+    if (cachedTasks.tagCounts) tagCounts.value = cachedTasks.tagCounts
   }
-  await load()
+  const cachedTags = getCache(CACHE_KEYS.TAGS)
+  if (cachedTags?.length) allTags.value = cachedTags
+
+  // 2) 后台并行刷新:标签 / 用户信息 / 任务列表 同时请求
+  const refreshTags = fetchTags().then(tags => {
+    if (tags?.length) {
+      allTags.value = tags
+      setCache(CACHE_KEYS.TAGS, tags)
+    }
+  }).catch(() => {})
+
+  const refreshUser = (!userStore.user) ? loadUser().catch(() => {}) : Promise.resolve()
+
+  // 任务加载(后台刷新,不阻塞首屏)
+  const refreshTasks = load(true)
+
+  await Promise.allSettled([refreshTags, refreshUser, refreshTasks])
 })
 
 onUnmounted(() => {
@@ -868,7 +895,8 @@ watch(keyword, () => {
 })
 
 watch(() => route.path, (newPath) => {
-  if (newPath === '/tasks') load()
+  // 从详情/编辑页返回时:先展示已有数据,后台静默刷新(不闪 loading)
+  if (newPath === '/tasks') load(true)
 })
 </script>
 
