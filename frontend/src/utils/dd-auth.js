@@ -25,23 +25,25 @@ function withTimeout(promise, ms, msg) {
  *
  * 【为什么清缓存后会 40078】
  * 清除缓存后钉钉 WebView 冷启动，原生桥(native bridge)需要重建。
- * dd.ready() 只表示 JS SDK 加载完成，此时桥可能还没和钉钉服务器完成同步。
- * 若立即调 requestAuthCode，原生App会返回一个 code，但该 code 还没注册到
- * 钉钉服务端，后端用它调 getuserinfo 就会报 40078「不存在的临时授权码」。
+ * 仅等待 dd.ready() 不够 —— 清缓存后 JSAPI 的鉴权状态也被清掉了，
+ * 需要先 dd.config 完成鉴权，requestAuthCode 返回的 code 才会在服务端生效。
+ * 否则会拿到一个"看起来正常"但服务端不认的 code → 40078。
  *
  * 【对策】
- * 1. dd.ready 之后额外等待 1s，让桥完成服务端同步
- * 2. 由 Login.vue 在收到 40078 时重新取码重试（每次取码都重新走一遍 ready+等待）
+ * 1. 先 dd.config 鉴权（用后端下发的 jsapi 签名）
+ * 2. 等 dd.ready 后再取码
+ * 3. 取码后由 Login.vue 在 40078 时重试
  */
 export async function requestAuthCode(corpId) {
   if (!isInDingTalk()) {
     throw new Error('NOT_IN_DINGTALK')
   }
   const dd = await import('dingtalk-jsapi')
+  const { getJsapiConfig } = await import('../api/dingtalk')
 
   const params = corpId ? { corpId } : {}
 
-  // 真正取码的逻辑，放在 dd.ready 回调里执行，保证原生桥就绪
+  // 真正取码的逻辑
   function fetchCode() {
     return new Promise((resolve, reject) => {
       try {
@@ -67,24 +69,34 @@ export async function requestAuthCode(corpId) {
     })
   }
 
-  // 等 dd.ready 就绪(5s 兜底)，就绪后在回调里取码
-  const readyPromise = new Promise((resolve) => {
-    try {
-      dd.ready(() => resolve('ready'))
-    } catch (e) {
-      resolve('ready_error')
-    }
-  })
-
+  // ★ 关键：先 dd.config 鉴权。清缓存后必须重新鉴权，否则取到的 code 无效
   try {
-    await withTimeout(readyPromise, 5000, 'ready_timeout')
+    const pageUrl = location.href.split('#')[0]
+    const cfg = await getJsapiConfig(pageUrl)
+    await new Promise((resolve, reject) => {
+      try {
+        dd.config({
+          agentId: cfg.agentId,
+          corpId: cfg.corpId,
+          timeStamp: cfg.timeStamp,
+          nonceStr: cfg.nonceStr,
+          signature: cfg.signature,
+          jsApiList: ['runtime.permission.requestAuthCode']
+        })
+      } catch (e) { reject(e); return }
+      // dd.ready 在 config 鉴权成功后触发
+      dd.ready(() => resolve('ready'))
+      dd.error((err) => reject(new Error('dd.config 鉴权失败: ' + JSON.stringify(err))))
+    })
   } catch (e) {
-    // 就绪超时也继续尝试取码（requestAuthCode 自身有超时兜底）
+    // 鉴权失败不直接抛错，降级到只等 dd.ready（有些场景 config 非必须）
+    console.warn('[dd-auth] dd.config 失败，降级到 dd.ready:', e)
+    try {
+      await withTimeout(new Promise((resolve) => {
+        try { dd.ready(() => resolve('ready')) } catch { resolve('ready_error') }
+      }), 5000, 'ready_timeout')
+    } catch {}
   }
-
-  // ★ 关键：dd.ready 之后额外等待，让原生桥与钉钉服务端完成同步
-  // 清除缓存后桥是冷启动，需要这段时间才能让取到的 code 在服务端生效
-  await new Promise(r => setTimeout(r, 1000))
 
   // 取码：12s 超时
   const code = await withTimeout(fetchCode(), 12000, '钉钉免登超时：未获取到授权码')

@@ -505,6 +505,42 @@ async function requireUser(c, next) {
 // ============================================================
 app.get('/api/health', (c) => c.json({ ok: true }))
 
+// 临时调试接口：验证钉钉配置是否匹配（排查 40078）
+app.get('/api/debug/dingtalk', async (c) => {
+  const result = {
+    corpId: env(c, 'DINGTALK_CORP_ID'),
+    appKey: env(c, 'DINGTALK_APP_KEY') ? env(c, 'DINGTALK_APP_KEY').slice(0, 6) + '***' : null,
+    agentId: env(c, 'APP_AGENT_ID'),
+    accessTokenOk: false,
+    appInfo: null,
+    userInfoWithFakeCode: null,
+    error: null
+  }
+  try {
+    const token = await getDingtalkAccessToken(c)
+    result.accessTokenOk = !!token
+    // 1) 用新版 API 获取应用信息，验证 corpId 是否匹配
+    const appKey = env(c, 'DINGTALK_APP_KEY')
+    if (appKey) {
+      // 尝试通过 appKey 获取应用详情（含所属 corpId）
+      const res = await fetch(`https://api.dingtalk.com/v1.0/applications/${appKey}`, {
+        headers: { 'x-acs-dingtalk-access-token': token }
+      })
+      result.appInfo = await res.json().catch(() => ({ parseError: true }))
+    }
+    // 2) 用假 code 调 getuserinfo，确认 access_token 本身没问题（应返回 40078 而非 token 错误）
+    const r2 = await fetch(`https://oapi.dingtalk.com/topapi/v2/user/getuserinfo?access_token=${token}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: 'debug_fake_code_for_test' })
+    })
+    result.userInfoWithFakeCode = await r2.json()
+  } catch (e) {
+    result.error = e.message
+  }
+  return c.json(result)
+})
+
 app.get('/api/auth/config', (c) => c.json({
   corpId: env(c, 'DINGTALK_CORP_ID'),
   appKey: env(c, 'DINGTALK_APP_KEY')
