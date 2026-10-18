@@ -22,8 +22,16 @@ function withTimeout(promise, ms, msg) {
 
 /**
  * 请求免登授权码 authCode（用 JSAPI）
- * 清理缓存后钉钉 WebView 原生桥可能尚未完全就绪，直接调 requestAuthCode
- * 可能拿到无效码（后端报 40078）。这里确保在 dd.ready 之后再取码，并支持一次重试。
+ *
+ * 【为什么清缓存后会 40078】
+ * 清除缓存后钉钉 WebView 冷启动，原生桥(native bridge)需要重建。
+ * dd.ready() 只表示 JS SDK 加载完成，此时桥可能还没和钉钉服务器完成同步。
+ * 若立即调 requestAuthCode，原生App会返回一个 code，但该 code 还没注册到
+ * 钉钉服务端，后端用它调 getuserinfo 就会报 40078「不存在的临时授权码」。
+ *
+ * 【对策】
+ * 1. dd.ready 之后额外等待 1s，让桥完成服务端同步
+ * 2. 由 Login.vue 在收到 40078 时重新取码重试（每次取码都重新走一遍 ready+等待）
  */
 export async function requestAuthCode(corpId) {
   if (!isInDingTalk()) {
@@ -73,6 +81,10 @@ export async function requestAuthCode(corpId) {
   } catch (e) {
     // 就绪超时也继续尝试取码（requestAuthCode 自身有超时兜底）
   }
+
+  // ★ 关键：dd.ready 之后额外等待，让原生桥与钉钉服务端完成同步
+  // 清除缓存后桥是冷启动，需要这段时间才能让取到的 code 在服务端生效
+  await new Promise(r => setTimeout(r, 1000))
 
   // 取码：12s 超时
   const code = await withTimeout(fetchCode(), 12000, '钉钉免登超时：未获取到授权码')

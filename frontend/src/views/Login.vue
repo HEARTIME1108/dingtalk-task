@@ -42,12 +42,18 @@ function isAuthCodeExpired(e) {
   return /40078|临时授权码|authCode|授权码/.test(msg)
 }
 
+// 重试延迟（递增），给原生桥更多时间与钉钉服务端同步
+const RETRY_DELAYS = [1500, 2500, 3500]
+const MAX_RETRY = RETRY_DELAYS.length
+
 async function doLogin(retryCount = 0) {
   loading.value = true
   error.value = ''
   try {
     const cfg = await getAppConfig()
-    loadingText.value = '获取钉钉授权码...'
+    loadingText.value = retryCount > 0
+      ? `重新获取授权码（第 ${retryCount} 次）...`
+      : '获取钉钉授权码...'
 
     // 在钉钉内：用 JSAPI 获取 authCode
     // 不在钉钉内：用 mock 登录
@@ -59,11 +65,11 @@ async function doLogin(retryCount = 0) {
     await doLoginWithAuthCode(authCode)
   } catch (e) {
     console.error('[Login] 登录失败:', e)
-    // 授权码失效(40078)：自动重试一次，重新取码
-    if (isAuthCodeExpired(e) && retryCount < 1) {
-      loadingText.value = '授权码已失效，重试中...'
-      // 等 800ms 让钉钉原生桥状态稳定后再取新码
-      await new Promise(r => setTimeout(r, 800))
+    // 授权码失效(40078)：自动重试，每次重新取码
+    if (isAuthCodeExpired(e) && retryCount < MAX_RETRY) {
+      const delay = RETRY_DELAYS[retryCount]
+      loadingText.value = `授权码未生效，${Math.round(delay / 1000)} 秒后重试（${retryCount + 1}/${MAX_RETRY}）...`
+      await new Promise(r => setTimeout(r, delay))
       return doLogin(retryCount + 1)
     }
     loading.value = false
