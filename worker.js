@@ -505,36 +505,74 @@ async function requireUser(c, next) {
 // ============================================================
 app.get('/api/health', (c) => c.json({ ok: true }))
 
-// 临时调试接口：验证钉钉配置是否匹配（排查 40078）
+// 调试接口：验证钉钉配置（排查 40078 corpId 不匹配）
 app.get('/api/debug/dingtalk', async (c) => {
   const result = {
     corpId: env(c, 'DINGTALK_CORP_ID'),
-    appKey: env(c, 'DINGTALK_APP_KEY') ? env(c, 'DINGTALK_APP_KEY').slice(0, 6) + '***' : null,
+    appKey: env(c, 'DINGTALK_APP_KEY') ? env(c, 'DINGTALK_APP_KEY').slice(0, 8) + '***' : null,
     agentId: env(c, 'APP_AGENT_ID'),
     accessTokenOk: false,
+    deptListResp: null,
+    deptDetail: null,
+    userList: null,
+    firstUserDetail: null,
+    orgInfo: null,
+    jsapiTicketOk: false,
     appInfo: null,
-    userInfoWithFakeCode: null,
     error: null
   }
   try {
     const token = await getDingtalkAccessToken(c)
     result.accessTokenOk = !!token
-    // 1) 用新版 API 获取应用信息，验证 corpId 是否匹配
-    const appKey = env(c, 'DINGTALK_APP_KEY')
-    if (appKey) {
-      // 尝试通过 appKey 获取应用详情（含所属 corpId）
-      const res = await fetch(`https://api.dingtalk.com/v1.0/applications/${appKey}`, {
-        headers: { 'x-acs-dingtalk-access-token': token }
-      })
-      result.appInfo = await res.json().catch(() => ({ parseError: true }))
-    }
-    // 2) 用假 code 调 getuserinfo，确认 access_token 本身没问题（应返回 40078 而非 token 错误）
-    const r2 = await fetch(`https://oapi.dingtalk.com/topapi/v2/user/getuserinfo?access_token=${token}`, {
+    // 1) 获取部门列表，验证 access_token 是否真的有企业上下文
+    const r1 = await fetch(`https://oapi.dingtalk.com/topapi/v2/department/listsub?access_token=${token}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: 'debug_fake_code_for_test' })
+      body: JSON.stringify({ dept_id: 1 })
     })
-    result.userInfoWithFakeCode = await r2.json()
+    result.deptListResp = await r1.json()
+    // 2) 获取 jsapi_ticket，验证 access_token 完整可用
+    const r2 = await fetch(`https://oapi.dingtalk.com/get_jsapi_ticket?access_token=${token}`)
+    const d2 = await r2.json()
+    result.jsapiTicketOk = d2.errcode === 0
+    // 3) 获取根部门详情，看是否能从中拿到企业 corpId
+    const r3 = await fetch(`https://oapi.dingtalk.com/topapi/v2/department/get?access_token=${token}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dept_id: 1 })
+    })
+    result.deptDetail = await r3.json()
+    // 4) 尝试获取应用详情（含所属 corpId）
+    const agentId = env(c, 'APP_AGENT_ID')
+    if (agentId) {
+      const r4 = await fetch(`https://oapi.dingtalk.com/topapi/v2/microapp/get?access_token=${token}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId: Number(agentId) })
+      })
+      result.appInfo = await r4.json().catch(() => null)
+    }
+    // 5) 获取用户列表，看第一个用户详情是否含 corpId
+    const r5 = await fetch(`https://oapi.dingtalk.com/topapi/v2/user/list?access_token=${token}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dept_id: 1, cursor: 0, size: 1 })
+    })
+    const userList = await r5.json()
+    result.userList = userList
+    if (userList.result?.list?.[0]?.userid) {
+      const r6 = await fetch(`https://oapi.dingtalk.com/topapi/v2/user/get?access_token=${token}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userid: userList.result.list[0].userid })
+      })
+      result.firstUserDetail = await r6.json()
+    }
+    // 6) 尝试新版 API 获取组织信息（含 corpId）
+    const r7 = await fetch('https://api.dingtalk.com/v1.0/contact/organizations?deptId=1', {
+      headers: { 'x-acs-dingtalk-access-token': token }
+    })
+    result.orgInfo = await r7.json().catch(() => null)
   } catch (e) {
     result.error = e.message
   }

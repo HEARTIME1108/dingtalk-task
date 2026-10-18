@@ -41,6 +41,7 @@ export async function requestAuthCode(corpId) {
   const dd = await import('dingtalk-jsapi')
   const { getJsapiConfig } = await import('../api/dingtalk')
 
+  // 必须传 corpId，否则钉钉报 "corpId 不合法"
   const params = corpId ? { corpId } : {}
 
   // 真正取码的逻辑
