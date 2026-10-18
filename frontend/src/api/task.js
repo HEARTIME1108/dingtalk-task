@@ -31,8 +31,10 @@ export const STATUS_COLOR = {
 }
 
 export const TASK_TYPE_LABEL = {
-  team: '班组任务',
-  department: '部门任务'
+  department: '部门任务',
+  team_a: '运行一值',
+  team_b: '运行二值',
+  team: '班组任务' // 兼容旧数据
 }
 
 export const PRIORITY_LABEL = { daily: '日任务', weekly: '周任务', monthly: '月任务', quarterly: '季度任务', yearly: '年任务' }
@@ -115,6 +117,30 @@ export async function fetchTaskCounts() {
 
 export async function fetchUsers() {
   return apiCall('/users')
+}
+
+// 职务(部门主任 / 值长):仅管理员可设置
+export const DUTY_LABEL = {
+  department_head: '部门主任',
+  team_a_lead: '运行一值值长',
+  team_b_lead: '运行二值值长',
+  member: '员工'
+}
+export async function updateUserDuty(userId, duty) {
+  return apiCall(`/users/${userId}/duty`, { method: 'PUT', body: JSON.stringify({ duty }) })
+}
+
+// 设置/取消管理员:仅管理员可操作
+export async function updateUserAdmin(userId, isAdmin) {
+  return apiCall(`/users/${userId}/admin`, { method: 'PUT', body: JSON.stringify({ is_admin: isAdmin }) })
+}
+
+// 每日未完成工作提醒配置(管理员 + 部门主任可配置)
+export async function fetchDigestSettings() {
+  return apiCall('/digest-settings')
+}
+export async function saveDigestSettings(payload) {
+  return apiCall('/digest-settings', { method: 'PUT', body: JSON.stringify(payload) })
 }
 
 // 当前登录用户信息(含 is_admin)

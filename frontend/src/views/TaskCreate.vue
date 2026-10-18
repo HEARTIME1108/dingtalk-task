@@ -75,58 +75,85 @@
         </div>
       </van-form>
 
-      <van-popup v-model:show="showAssignee" position="bottom" round>
-        <van-radio-group v-model="form.assignee_id">
-          <van-cell v-for="u in users" :key="u.id" :title="u.name" clickable @click="form.assignee_id = u.id">
-            <template #right-icon>
-              <van-radio :name="u.id" />
-            </template>
-          </van-cell>
-        </van-radio-group>
-        <div style="padding:12px;">
+      <van-popup v-model:show="showAssignee" position="bottom" round @open="openPicker">
+        <div class="picker-header">
+          <span class="picker-close" @click="showAssignee = false">取消</span>
+          <span class="picker-title">选择负责人</span>
+          <span class="picker-placeholder"></span>
+        </div>
+        <van-search v-model="userSearch" placeholder="搜索姓名" shape="round" />
+        <div class="picker-list">
+          <van-radio-group v-model="form.assignee_id">
+            <van-cell v-for="u in filteredUsers" :key="u.id" :title="u.name" clickable @click="form.assignee_id = u.id">
+              <template #right-icon><van-radio :name="u.id" /></template>
+            </van-cell>
+            <div v-if="filteredUsers.length === 0" class="picker-empty">无匹配人员</div>
+          </van-radio-group>
+        </div>
+        <div class="picker-footer">
           <van-button type="primary" block @click="showAssignee = false">确定</van-button>
         </div>
       </van-popup>
 
-      <van-popup v-model:show="showReviewer" position="bottom" round>
-        <van-radio-group v-model="form.reviewer_id">
-          <van-cell v-for="u in users" :key="u.id" :title="u.name" clickable @click="form.reviewer_id = u.id">
-            <template #right-icon>
-              <van-radio :name="u.id" />
-            </template>
-          </van-cell>
-        </van-radio-group>
-        <div style="padding:12px;">
+      <van-popup v-model:show="showReviewer" position="bottom" round @open="openPicker">
+        <div class="picker-header">
+          <span class="picker-close" @click="showReviewer = false">取消</span>
+          <span class="picker-title">选择审批人</span>
+          <span class="picker-placeholder"></span>
+        </div>
+        <van-search v-model="userSearch" placeholder="搜索姓名" shape="round" />
+        <div class="picker-list">
+          <van-radio-group v-model="form.reviewer_id">
+            <van-cell v-for="u in filteredUsers" :key="u.id" :title="u.name" clickable @click="form.reviewer_id = u.id">
+              <template #right-icon><van-radio :name="u.id" /></template>
+            </van-cell>
+            <div v-if="filteredUsers.length === 0" class="picker-empty">无匹配人员</div>
+          </van-radio-group>
+        </div>
+        <div class="picker-footer">
           <van-button type="primary" block @click="showReviewer = false">确定</van-button>
         </div>
       </van-popup>
 
-      <van-popup v-model:show="showDepartmentHead" position="bottom" round>
-        <van-radio-group v-model="form.department_head_id">
-          <van-cell v-for="u in users" :key="u.id" :title="u.name" clickable @click="form.department_head_id = u.id">
-            <template #right-icon>
-              <van-radio :name="u.id" />
-            </template>
-          </van-cell>
-        </van-radio-group>
-        <div style="padding:12px;">
+      <van-popup v-model:show="showDepartmentHead" position="bottom" round @open="openPicker">
+        <div class="picker-header">
+          <span class="picker-close" @click="showDepartmentHead = false">取消</span>
+          <span class="picker-title">选择部门审批人</span>
+          <span class="picker-placeholder"></span>
+        </div>
+        <van-search v-model="userSearch" placeholder="搜索姓名" shape="round" />
+        <div class="picker-list">
+          <van-radio-group v-model="form.department_head_id">
+            <van-cell v-for="u in filteredUsers" :key="u.id" :title="u.name" clickable @click="form.department_head_id = u.id">
+              <template #right-icon><van-radio :name="u.id" /></template>
+            </van-cell>
+            <div v-if="filteredUsers.length === 0" class="picker-empty">无匹配人员</div>
+          </van-radio-group>
+        </div>
+        <div class="picker-footer">
           <van-button type="primary" block @click="showDepartmentHead = false">确定</van-button>
         </div>
       </van-popup>
 
-      <van-popup v-model:show="showCollaborators" position="bottom" round>
-        <van-checkbox-group v-model="collaboratorIds">
-          <van-cell v-for="u in collaboratorCandidates" :key="u.id" :title="u.name" clickable
-            @click="toggleArrayItem(collaboratorIds, u.id)">
-            <template #right-icon>
-              <van-checkbox :name="u.id" />
-            </template>
-          </van-cell>
-        </van-checkbox-group>
-        <div v-if="collaboratorCandidates.length === 0" style="padding:24px;text-align:center;color:#969799;font-size:14px;">
-          负责人、审批人已选中,无可选协作者
+      <van-popup v-model:show="showCollaborators" position="bottom" round @open="openPicker">
+        <div class="picker-header">
+          <span class="picker-close" @click="showCollaborators = false">取消</span>
+          <span class="picker-title">选择协作者</span>
+          <span class="picker-placeholder"></span>
         </div>
-        <div style="padding: 12px;">
+        <van-search v-model="userSearch" placeholder="搜索姓名" shape="round" />
+        <div class="picker-list">
+          <van-checkbox-group v-model="collaboratorIds">
+            <van-cell v-for="u in filteredCollaborators" :key="u.id" :title="u.name" clickable
+              @click="toggleArrayItem(collaboratorIds, u.id)">
+              <template #right-icon><van-checkbox :name="u.id" @click.stop /></template>
+            </van-cell>
+            <div v-if="filteredCollaborators.length === 0" class="picker-empty">
+              {{ collaboratorCandidates.length === 0 ? '负责人、审批人已选中,无可选协作者' : '无匹配人员' }}
+            </div>
+          </van-checkbox-group>
+        </div>
+        <div class="picker-footer">
           <van-button type="primary" block @click="showCollaborators = false">确定</van-button>
         </div>
       </van-popup>
@@ -143,7 +170,7 @@
           <van-cell v-for="t in allTags" :key="t.id" :title="t.name" clickable
             @click="toggleArrayItem(selectedTagIds, t.id)">
             <template #right-icon>
-              <van-checkbox :name="t.id" />
+              <van-checkbox :name="t.id" @click.stop />
             </template>
           </van-cell>
         </van-checkbox-group>
@@ -157,7 +184,7 @@
 
       <van-popup v-model:show="showTaskType" position="bottom" round>
         <van-radio-group v-model="form.task_type">
-          <van-cell v-for="(l, k) in TASK_TYPE_LABEL" :key="k" :title="l" clickable @click="form.task_type = k">
+          <van-cell v-for="(l, k) in CREATE_TASK_TYPES" :key="k" :title="l" clickable @click="form.task_type = k">
             <template #right-icon>
               <van-radio :name="k" />
             </template>
@@ -194,6 +221,11 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { fetchUsers, createTask, fetchTags, addTagToTask, PRIORITY_LABEL, TASK_TYPE_LABEL } from '../api/task'
 
+// 创建时可选的类型(排除旧的 team 兼容值)
+const CREATE_TASK_TYPES = Object.fromEntries(
+  Object.entries(TASK_TYPE_LABEL).filter(([k]) => k !== 'team')
+)
+
 const router = useRouter()
 const form = ref({
   title: '', description: '', priority: '',
@@ -219,6 +251,21 @@ const allTags = ref([])
 const selectedTagIds = ref([])
 const selectedTags = computed(() => allTags.value.filter(t => selectedTagIds.value.includes(t.id)))
 const showTags = ref(false)
+
+// 选人弹窗搜索
+const userSearch = ref('')
+const filteredUsers = computed(() => {
+  const q = userSearch.value.trim().toLowerCase()
+  if (!q) return users.value
+  return users.value.filter(u => (u.name || '').toLowerCase().includes(q))
+})
+const filteredCollaborators = computed(() => {
+  const q = userSearch.value.trim().toLowerCase()
+  const list = collaboratorCandidates.value
+  if (!q) return list
+  return list.filter(u => (u.name || '').toLowerCase().includes(q))
+})
+function openPicker() { userSearch.value = '' }
 
 // 已选的负责人/审批人/部门主任的 id 集合
 const excludedIds = computed(() => {
@@ -250,6 +297,15 @@ function labelOf(uid) {
 function onPick({ selectedValues }, key, refShow) {
   form.value[key] = selectedValues[0]
   refShow.value = false
+  if (key === 'task_type') autoFillHead()
+}
+
+// 选「部门任务」且还没选部门负责人时,按职务自动带出部门主任(唯一时才带,避免选错)
+function autoFillHead() {
+  if (form.value.task_type !== 'department') return
+  if (form.value.department_head_id) return
+  const heads = users.value.filter(u => u.duty === 'department_head')
+  if (heads.length === 1) form.value.department_head_id = heads[0].id
 }
 
 function toggleArrayItem(arr, id) {
@@ -296,6 +352,7 @@ onMounted(async () => {
   try {
     users.value = await fetchUsers()
     allTags.value = await fetchTags()
+    autoFillHead()
   } catch (e) {
     errorMsg.value = '加载用户列表失败：' + (e.message || '')
   }
@@ -306,4 +363,16 @@ onMounted(async () => {
 
 <style scoped>
 .page { min-height: 100vh; background: #f7f8fa; }
+
+/* 选人弹窗布局:头部固定、列表滚动、底部按钮固定 */
+.picker-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px; border-bottom: 1px solid #ebedf0;
+}
+.picker-close { color: #969799; font-size: 15px; cursor: pointer; }
+.picker-title { font-size: 16px; font-weight: 600; color: #323233; }
+.picker-placeholder { width: 32px; }
+.picker-list { max-height: 45vh; overflow-y: auto; }
+.picker-empty { padding: 32px 16px; text-align: center; color: #969799; font-size: 14px; }
+.picker-footer { padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); border-top: 1px solid #ebedf0; }
 </style>

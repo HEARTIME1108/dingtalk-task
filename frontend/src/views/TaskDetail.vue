@@ -354,8 +354,9 @@ const nextActions = computed(() => {
   if (status === 'done' && (isDepartmentHead.value || admin) && task.value.task_type === 'department') {
     actions.push({ type: 'danger', label: '关闭任务', to: 'closed' })
   }
-  // done + 是创建人 + task_type=team → "关闭任务" (closed)(班组任务创建人可关闭)
-  if (status === 'done' && (isCreator.value || admin) && task.value.task_type === 'team') {
+  // done + 是创建人 + task_type 是班组类(team/team_a/team_b) → "关闭任务" (创建人可关闭)
+  const teamTypes = ['team', 'team_a', 'team_b']
+  if (status === 'done' && (isCreator.value || admin) && teamTypes.includes(task.value.task_type)) {
     actions.push({ type: 'danger', label: '关闭任务', to: 'closed' })
   }
   return actions

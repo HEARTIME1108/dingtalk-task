@@ -179,6 +179,19 @@ async function notifyTaskEvent(c, task, event, operatorId, operatorName, extraUs
     const prioText = task.priority ? (PRIORITY_CN[task.priority] || task.priority) : '普通'
     const dueText = task.due_date || '无'
 
+    // 任务类型/状态中文
+    const TYPE_CN = { department: '部门任务', team: '班组任务', team_a: '运行一值', team_b: '运行二值' }
+    const STATUS_CN = {
+      todo: '待办', in_progress: '进行中', pending_review: '待审核',
+      done: '已完成', rejected: '已驳回', closed: '已关闭'
+    }
+    const typeText = task.task_type ? (TYPE_CN[task.task_type] || task.task_type) : '部门任务'
+    const statusText = task.status ? (STATUS_CN[task.status] || task.status) : ''
+
+    // 钉钉卡片 markdown 中单换行会被合并成一行,必须用空行(\n\n)才能换行
+    const L = (label, val) => `**${label}**：${val}`
+    const lines = (...arr) => arr.filter(Boolean).join('\n\n')
+
     // 取负责人/审核人姓名:让负责人知道"做什么任务、交给谁审核"
     const nameOf = {}
     try {
@@ -198,23 +211,61 @@ async function notifyTaskEvent(c, task, event, operatorId, operatorName, extraUs
       // 创建任务时:负责人、审核人、协作者、部门主任 全部通知
       targetIds = [task.assignee_id, task.reviewer_id, task.department_head_id, ...extraUserIds]
       title = '新任务派发'
-      markdown = `**${operatorName}** 派发了任务\n\n**任务**：${task.title}\n**优先级**：${prioText}\n**负责人**：${assigneeName}\n**审核人**：${reviewerName}\n**截止**：${dueText}\n\n请及时处理。`
+      markdown = lines(
+        `**${operatorName}** 派发了新任务`,
+        L('任务', task.title),
+        L('类型', typeText),
+        L('负责人', assigneeName),
+        L('审核人', reviewerName),
+        L('优先级', prioText),
+        L('截止', dueText),
+        '请及时处理。'
+      )
     } else if (event === 'review') {
       targetIds = [task.reviewer_id]
       title = '有任务待审核'
-      markdown = `**${operatorName}** 提交了任务待你审核\n\n**任务**：${task.title}\n**负责人**：${assigneeName}\n**优先级**：${prioText}\n**截止**：${dueText}\n\n请尽快审批。`
+      markdown = lines(
+        `**${operatorName}** 提交了任务待你审核`,
+        L('任务', task.title),
+        L('类型', typeText),
+        L('负责人', assigneeName),
+        L('状态', '待审核'),
+        L('优先级', prioText),
+        L('截止', dueText),
+        '请尽快审批。'
+      )
     } else if (event === 'approve') {
       targetIds = [task.assignee_id, task.creator_id]
       title = '任务审批通过'
-      markdown = `**${operatorName}** 通过了任务\n\n**任务**：${task.title}\n**负责人**：${assigneeName}\n**截止**：${dueText}`
+      markdown = lines(
+        `**${operatorName}** 通过了任务`,
+        L('任务', task.title),
+        L('类型', typeText),
+        L('负责人', assigneeName),
+        L('状态', '已完成'),
+        L('截止', dueText)
+      )
     } else if (event === 'reject') {
       targetIds = [task.assignee_id]
       title = '任务被驳回'
-      markdown = `**${operatorName}** 驳回了任务，请重新执行\n\n**任务**：${task.title}\n**优先级**：${prioText}\n**截止**：${dueText}`
+      markdown = lines(
+        `**${operatorName}** 驳回了任务,请重新执行`,
+        L('任务', task.title),
+        L('类型', typeText),
+        L('负责人', assigneeName),
+        L('优先级', prioText),
+        L('截止', dueText)
+      )
     } else if (event === 'close' || event === 'complete') {
       targetIds = [task.creator_id]
       title = event === 'close' ? '任务已关闭' : '任务已完成'
-      markdown = `**${task.title}** 已${event === 'close' ? '关闭' : '完成'}`
+      markdown = lines(
+        `**${task.title}** 已${event === 'close' ? '关闭' : '完成'}`,
+        L('类型', typeText),
+        L('负责人', assigneeName),
+        statusText ? L('当前状态', statusText) : '',
+        L('截止', dueText)
+      )
     } else {
       return { skipped: true, reason: 'unknown_event' }
     }
@@ -548,15 +599,14 @@ async function syncOrgMembers(c) {
     }
   }
 
+  // 一次性查出所有已存在的 dingtalk_user_id,避免逐人查询浪费子请求
+  const existingRows = await adminFetch(c, `users?select=dingtalk_user_id&limit=1000`) || []
+  const existingIds = new Set(existingRows.map(r => r.dingtalk_user_id))
+
   const results = { total: allMembers.size, created: 0, skipped: 0, errors: [] }
   for (const [userid, member] of allMembers) {
     try {
-      const existing = await adminFetch(c, `users?dingtalk_user_id=eq.${userid}&select=id`)
-      if (existing && existing.length > 0) {
-        await adminFetch(c, `users?dingtalk_user_id=eq.${userid}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ name: member.name, avatar_url: member.avatar_url })
-        })
+      if (existingIds.has(userid)) {
         results.skipped++
         continue
       }
@@ -584,6 +634,7 @@ async function syncOrgMembers(c) {
           })
         })
       }
+      existingIds.add(userid)
       results.created++
     } catch (e) {
       results.errors.push(`${member.name}: ${e.message}`)
@@ -621,7 +672,12 @@ app.get('/api/tasks', requireUser, async (c) => {
   try {
     const userId = c.get('userId')
     const status = c.req.query('status')
-    const keyword = c.req.query('keyword')
+    // 关键词过滤放在 Worker 内做:直接把中文拼进 Supabase 的 ilike 会导致 URL 编码错误(500)
+    const keyword = (c.req.query('keyword') || '').trim().toLowerCase()
+    const matchKeyword = (t) => !keyword
+      || (t.title || '').toLowerCase().includes(keyword)
+      || (t.description || '').toLowerCase().includes(keyword)
+    const filterKw = (list) => (list || []).filter(matchKeyword)
 
     const myAssigns = await adminFetch(c, `task_assignees?select=task_id&user_id=eq.${userId}`)
     const myTaskIds = (myAssigns || []).map(a => a.task_id)
@@ -646,14 +702,13 @@ app.get('/api/tasks', requireUser, async (c) => {
         `and(assignee_id.eq.${userId},status.eq.todo)`,
         `and(assignee_id.eq.${userId},status.eq.rejected)`,
         `and(reviewer_id.eq.${userId},status.eq.pending_review)`,
-        `and(creator_id.eq.${userId},status.eq.done,task_type.eq.team)`,
+        `and(creator_id.eq.${userId},status.eq.done,task_type.in.(team,team_a,team_b))`,
         `and(department_head_id.eq.${userId},status.eq.done,task_type.eq.department)`
       ].join(',')
-      let todoUrl = `tasks?${selectClause}&or=(${todoCond})&order=created_at.desc`
-      if (keyword) todoUrl += `&title=ilike.%${keyword}%`
+      const todoUrl = `tasks?${selectClause}&or=(${todoCond})&order=created_at.desc`
       try {
         const data = await adminFetch(c, todoUrl)
-        return c.json(data || [])
+        return c.json(filterKw(data))
       } catch (e) {
         // task_type/department_head_id 列可能不存在,回退:去掉相关条件,且不带 department_head join
         const todoFallback = [
@@ -661,28 +716,25 @@ app.get('/api/tasks', requireUser, async (c) => {
           `and(assignee_id.eq.${userId},status.eq.rejected)`,
           `and(reviewer_id.eq.${userId},status.eq.pending_review)`
         ].join(',')
-        let fallbackUrl = `tasks?${selectClauseFallback}&or=(${todoFallback})&order=created_at.desc`
-        if (keyword) fallbackUrl += `&title=ilike.%${keyword}%`
+        const fallbackUrl = `tasks?${selectClauseFallback}&or=(${todoFallback})&order=created_at.desc`
         const data = await adminFetch(c, fallbackUrl)
-        return c.json(data || [])
+        return c.json(filterKw(data))
       }
     }
 
     // 其他状态:用户相关 + 状态过滤
     let url = `tasks?${selectClause}&or=(${orCond})&order=created_at.desc`
     if (status && status !== 'all') url += `&status=eq.${status}`
-    if (keyword) url += `&title=ilike.%${keyword}%`
 
     try {
       const data = await adminFetch(c, url)
-      return c.json(data || [])
+      return c.json(filterKw(data))
     } catch (e) {
       // department_head_id 列可能不存在,回退不带 department_head join
       let fallbackUrl = `tasks?${selectClauseFallback}&or=(${orCond})&order=created_at.desc`
       if (status && status !== 'all') fallbackUrl += `&status=eq.${status}`
-      if (keyword) fallbackUrl += `&title=ilike.%${keyword}%`
       const data = await adminFetch(c, fallbackUrl)
-      return c.json(data || [])
+      return c.json(filterKw(data))
     }
   } catch (e) {
     console.error('[list tasks]', e)
@@ -727,7 +779,7 @@ app.get('/api/tasks/counts', requireUser, async (c) => {
       `and(assignee_id.eq.${userId},status.eq.todo)`,
       `and(assignee_id.eq.${userId},status.eq.rejected)`,
       `and(reviewer_id.eq.${userId},status.eq.pending_review)`,
-      `and(creator_id.eq.${userId},status.eq.done,task_type.eq.team)`,
+      `and(creator_id.eq.${userId},status.eq.done,task_type.in.(team,team_a,team_b))`,
       `and(department_head_id.eq.${userId},status.eq.done,task_type.eq.department)`
     ].join(',')
     let todoUrl = `tasks?${selectClause}&or=(${todoCond})`
@@ -819,6 +871,10 @@ app.post('/api/tasks', requireUser, async (c) => {
     const { title, description, priority, assignee_id, reviewer_id, due_date, assignee_ids, task_type, department_head_id, parent_id } = body
     if (!title) return c.json({ message: '标题必填' }, 400)
 
+    const finalType = task_type || 'department'
+    // 建任务时没指定部门负责人 → 按分类对应的职务自动带出(部门任务→部门主任,运行一值→一值值长)
+    const headId = department_head_id || await deriveHeadByType(c, finalType)
+
     const basePayload = {
       title, description,
       priority: priority || null,
@@ -833,7 +889,7 @@ app.post('/api/tasks', requireUser, async (c) => {
       // 先带 task_type + department_head_id 插入
       const tasks = await adminFetch(c, 'tasks', {
         method: 'POST',
-        body: JSON.stringify({ ...basePayload, task_type: task_type || 'department', department_head_id: department_head_id || null })
+        body: JSON.stringify({ ...basePayload, task_type: finalType, department_head_id: headId || null })
       })
       task = Array.isArray(tasks) ? tasks[0] : tasks
     } catch (e) {
@@ -841,7 +897,7 @@ app.post('/api/tasks', requireUser, async (c) => {
       try {
         const tasks = await adminFetch(c, 'tasks', {
           method: 'POST',
-          body: JSON.stringify({ ...basePayload, task_type: task_type || 'department' })
+          body: JSON.stringify({ ...basePayload, task_type: finalType })
         })
         task = Array.isArray(tasks) ? tasks[0] : tasks
       } catch (e2) {
@@ -1129,22 +1185,151 @@ app.post('/api/tasks/:id/quick-complete', requireUser, async (c) => {
 
 // 当前登录用户信息(含 is_admin)
 app.get('/api/me', requireUser, async (c) => {
+  const userId = c.get('userId')
+  // duty 列可能还没加(见 sql/migration_v3.sql),失败时回退
   try {
-    const userId = c.get('userId')
-    const data = await adminFetch(c, `users?id=eq.${userId}&select=id,name,avatar_url,is_admin,dingtalk_user_id`)
-    const user = data && data.length ? data[0] : { id: userId, name: '未知用户', is_admin: false }
+    const data = await adminFetch(c, `users?id=eq.${userId}&select=id,name,avatar_url,is_admin,dingtalk_user_id,duty`)
+    const user = data && data.length ? data[0] : { id: userId, name: '未知用户', is_admin: false, duty: 'member' }
     return c.json(user)
   } catch (e) {
-    return c.json({ id: c.get('userId'), name: '未知用户', is_admin: false }, 200)
+    try {
+      const data = await adminFetch(c, `users?id=eq.${userId}&select=id,name,avatar_url,is_admin,dingtalk_user_id`)
+      const user = data && data.length ? { duty: 'member', ...data[0] } : { id: userId, name: '未知用户', is_admin: false, duty: 'member' }
+      return c.json(user)
+    } catch (e2) {
+      return c.json({ id: userId, name: '未知用户', is_admin: false, duty: 'member' }, 200)
+    }
   }
 })
 
 // users
 app.get('/api/users', requireUser, async (c) => {
-  const data = await adminFetch(c, 'users?select=id,name,avatar_url,dingtalk_user_id&order=name.asc')
+  // duty 列可能还没加,失败时回退
+  let data = null
+  try {
+    data = await adminFetch(c, 'users?select=id,name,avatar_url,dingtalk_user_id,duty,is_admin&order=name.asc')
+  } catch (e) {
+    data = await adminFetch(c, 'users?select=id,name,avatar_url,dingtalk_user_id,is_admin&order=name.asc')
+  }
   // 过滤掉“调试登录”产生的 mock 账号,避免出现在成员选择列表(它们也收不到钉钉通知)
   const list = (data || []).filter(u => !String(u.dingtalk_user_id || '').startsWith('mock_'))
   return c.json(list)
+})
+
+// ============================================================
+// 职务(部门主任 / 值长)与每日提醒
+// ============================================================
+const DUTY_VALUES = ['department_head', 'team_a_lead', 'team_b_lead', 'member']
+// 任务分类 → 对应职务(用于建任务时自动带出部门负责人)
+// 注意:只有「部门任务」会自动带出负责人。部门任务的 department_head_id 就是"部门审批人"。
+//      运行一值/二值 的班组任务,负责人是下面单独选的,不在这里兜底,避免改动原有创建流程。
+const TYPE_TO_DUTY = { department: 'department_head' }
+const DIGEST_TYPES = ['department', 'team_a', 'team_b']
+
+// 读当前用户的权限信息(is_admin / duty),duty 列不存在时按 member 处理
+async function getActor(c, userId) {
+  try {
+    const d = await adminFetch(c, `users?id=eq.${userId}&select=id,is_admin,duty`)
+    return d && d[0] ? d[0] : { id: userId, is_admin: false, duty: 'member' }
+  } catch (e) {
+    try {
+      const d = await adminFetch(c, `users?id=eq.${userId}&select=id,is_admin`)
+      return d && d[0] ? { ...d[0], duty: 'member' } : { id: userId, is_admin: false, duty: 'member' }
+    } catch (e2) {
+      return { id: userId, is_admin: false, duty: 'member' }
+    }
+  }
+}
+
+// 每日提醒的配置权限:管理员 / 部门主任 / 运行一值值长 / 运行二值值长
+function canManageDigest(actor) {
+  return actor.is_admin === true ||
+    ['department_head', 'team_a_lead', 'team_b_lead'].includes(actor.duty)
+}
+
+// 按任务分类推导部门负责人:只有当该职务唯一匹配时才带出,避免选错人
+async function deriveHeadByType(c, taskType) {
+  const duty = TYPE_TO_DUTY[taskType]
+  if (!duty) return null
+  try {
+    const rows = await adminFetch(c, `users?duty=eq.${duty}&select=id&limit=2`)
+    return rows && rows.length === 1 ? rows[0].id : null
+  } catch (e) {
+    return null
+  }
+}
+
+// 设置某个用户的职务(仅管理员)
+app.put('/api/users/:id/duty', requireUser, async (c) => {
+  const actor = await getActor(c, c.get('userId'))
+  if (actor.is_admin !== true) return c.json({ message: '只有管理员可以设置职务' }, 403)
+  const body = await c.req.json().catch(() => ({}))
+  if (!DUTY_VALUES.includes(body.duty)) return c.json({ message: '职务值不合法' }, 400)
+  try {
+    await adminFetch(c, `users?id=eq.${c.req.param('id')}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ duty: body.duty })
+    })
+    return c.json({ ok: true, duty: body.duty })
+  } catch (e) {
+    return c.json({ message: e.message }, 500)
+  }
+})
+
+// 设置/取消管理员(仅管理员)
+app.put('/api/users/:id/admin', requireUser, async (c) => {
+  const actor = await getActor(c, c.get('userId'))
+  if (actor.is_admin !== true) return c.json({ message: '只有管理员可以设置管理员' }, 403)
+  const body = await c.req.json().catch(() => ({}))
+  const isAdmin = body.is_admin === true
+  try {
+    await adminFetch(c, `users?id=eq.${c.req.param('id')}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ is_admin: isAdmin })
+    })
+    return c.json({ ok: true, is_admin: isAdmin })
+  } catch (e) {
+    return c.json({ message: e.message }, 500)
+  }
+})
+
+// 当前用户的每日提醒配置 + 是否有权限
+app.get('/api/digest-settings', requireUser, async (c) => {
+  const userId = c.get('userId')
+  const actor = await getActor(c, userId)
+  let setting = null
+  try {
+    const rows = await adminFetch(c, `daily_digest_settings?user_id=eq.${userId}&select=user_id,enabled,types,hour`)
+    setting = rows && rows[0] ? rows[0] : null
+  } catch (e) {
+    // 表还没建(sql/migration_v3.sql),按未配置处理
+  }
+  return c.json({
+    allowed: canManageDigest(actor),
+    is_admin: actor.is_admin === true,
+    duty: actor.duty || 'member',
+    setting: setting || { user_id: userId, enabled: false, types: [], hour: 8 }
+  })
+})
+
+app.put('/api/digest-settings', requireUser, async (c) => {
+  const userId = c.get('userId')
+  const actor = await getActor(c, userId)
+  if (!canManageDigest(actor)) return c.json({ message: '没有权限配置每日提醒' }, 403)
+  const body = await c.req.json().catch(() => ({}))
+  const enabled = body.enabled === true
+  const types = Array.isArray(body.types) ? body.types.filter(t => DIGEST_TYPES.includes(t)) : []
+  const hour = Number.isInteger(body.hour) ? Math.min(23, Math.max(0, body.hour)) : 8
+  try {
+    await adminFetch(c, 'daily_digest_settings', {
+      method: 'POST',
+      prefer: 'resolution=merge-duplicates,return=minimal',
+      body: JSON.stringify({ user_id: userId, enabled, types, hour, updated_at: new Date().toISOString() })
+    })
+    return c.json({ ok: true })
+  } catch (e) {
+    return c.json({ message: e.message }, 500)
+  }
 })
 
 // 同步组织成员:调用钉钉通讯录 API,把组织里所有人拉到数据库
@@ -1710,5 +1895,102 @@ app.get('/api/cron/check-overdue-tasks', async (c) => {
     return c.json({ message: e.message }, 500)
   }
 })
+
+// 每日未完成工作提醒:由 cron 每 30 分钟唤醒一次,给「配置时间点到了」的人发一条汇总
+// 只在整点那一档发送(cron :00 命中、:30 不命中),所以每人每天只会收到一次
+app.get('/api/cron/daily-digest', async (c) => {
+  const CRON_SECRET = env(c, 'CRON_SECRET')
+  const provided = c.req.query('secret')
+  if (CRON_SECRET && provided !== CRON_SECRET) return c.json({ message: 'unauthorized' }, 401)
+  if (typeof process !== 'undefined' && c.env) {
+    for (const k in c.env) {
+      if (!process.env[k]) { try { process.env[k] = String(c.env[k]) } catch (e) {} }
+    }
+  }
+  try {
+    // 北京时间 = UTC + 8
+    const bj = new Date(Date.now() + 8 * 3600 * 1000)
+    const hour = bj.getUTCHours()
+    const minute = bj.getUTCMinutes()
+    const dayKey = bj.toISOString().slice(0, 10)
+    if (minute >= 30) return c.json({ skipped: 'not_top_of_hour', hour, minute })
+
+    let settings = []
+    try {
+      settings = await adminFetch(c, 'daily_digest_settings?enabled=eq.true&select=user_id,types,hour,last_sent_slot') || []
+    } catch (e) {
+      return c.json({ skipped: 'no_settings_table', message: e.message })
+    }
+    const slot = `${dayKey}T${String(hour).padStart(2, '0')}`
+    const due = settings.filter(s => Number(s.hour) === hour && s.last_sent_slot !== slot)
+
+    let sent = 0
+    for (const s of due) {
+      try {
+        const md = await buildDigestMarkdown(c, s)
+        if (md) {
+          await sendDingtalkWorkNotice(c, [s.user_id], `每日未完成工作提醒（${bj.getUTCMonth() + 1}月${bj.getUTCDate()}日）`, md, '')
+          sent++
+        }
+        // 无论有没有未完成任务,都记下已发时段,避免重复检查
+        await adminFetch(c, `daily_digest_settings?user_id=eq.${s.user_id}`, {
+          method: 'PATCH', prefer: 'return=minimal', body: JSON.stringify({ last_sent_slot: slot })
+        })
+      } catch (e) {
+        console.warn('[digest] 发送失败', s.user_id, e.message)
+      }
+    }
+    return c.json({ hour, candidates: due.length, sent })
+  } catch (e) {
+    return c.json({ message: e.message }, 500)
+  }
+})
+
+// 生成某个人要看的每日汇总(按分类分组),没有未完成任务时返回空串
+async function buildDigestMarkdown(c, setting) {
+  const types = Array.isArray(setting.types) ? setting.types.filter(t => DIGEST_TYPES.includes(t)) : []
+  if (!types.length) return ''
+  const rows = await adminFetch(c,
+    `tasks?status=not.in.(done,closed,cancelled)&task_type=in.(${types.join(',')})`
+    + `&select=id,title,due_date,task_type,assignee:users!tasks_assignee_id_fkey(name),reviewer:users!tasks_reviewer_id_fkey(name)`
+    + `&order=due_date.asc.nullslast`)
+  const list = rows || []
+  if (!list.length) return ''
+
+  const TYPE_CN = { department: '部门任务', team: '班组任务', team_a: '运行一值', team_b: '运行二值' }
+  const MAX = 30
+  const bjNow = new Date(Date.now() + 8 * 3600 * 1000)
+  const todayStr = bjNow.toISOString().slice(0, 10)
+
+  const lineOf = (t) => {
+    const parts = []
+    if (t.due_date) {
+      const d1 = new Date(todayStr + 'T00:00:00Z').getTime()
+      const d2 = new Date(String(t.due_date).slice(0, 10) + 'T00:00:00Z').getTime()
+      const n = Math.round((d2 - d1) / 86400000)
+      parts.push(n > 0 ? `剩 ${n} 天` : (n === 0 ? '今天到期' : `已逾期 ${-n} 天`))
+    } else {
+      parts.push('无截止日期')
+    }
+    parts.push(`负责人：${t.assignee?.name || '—'}`)
+    parts.push(`审核人：${t.reviewer?.name || '—'}`)
+    return `· ${t.title} —— ${parts.join('，')}`
+  }
+
+  // 按分类分组;钉钉卡片 markdown 单换行会被合并,所以用空行分隔
+  const blocks = []
+  let shown = 0
+  for (const type of types) {
+    const group = list.filter(t => t.task_type === type)
+    if (!group.length) continue
+    const take = group.slice(0, MAX - shown)
+    shown += take.length
+    blocks.push(`**${TYPE_CN[type] || type}**（${group.length} 项）`)
+    for (const t of take) blocks.push(lineOf(t))
+    if (shown >= MAX) break
+  }
+  const more = list.length > shown ? [`> 还有 ${list.length - shown} 项未列出，请打开任务管理查看`] : []
+  return [`**未完成 ${list.length} 项**`, ...blocks, ...more].join('\n\n')
+}
 
 export default app

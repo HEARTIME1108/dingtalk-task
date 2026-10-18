@@ -2,9 +2,10 @@ name = "dingtalk-task-cron"
 main = "index.js"
 compatibility_date = "2024-09-23"
 
-# 每天 01:00 UTC = 09:00 北京时间，跑一次截止提醒检查
+# 1) 每天 01:00 UTC = 09:00 北京时间，跑到期前一天提醒
+# 2) 每 30 分钟一次，供「每日未完成工作汇总」按各人自定义时间派发（后端只在整点那一档真发）
 [triggers]
-crons = ["0 1 * * *"]
+crons = ["0 1 * * *", "*/30 * * * *"]
 
 [vars]
 BASE_URL = "https://dingtalk-task.pages.dev"

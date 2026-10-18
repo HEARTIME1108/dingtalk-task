@@ -1,41 +1,113 @@
 <template>
   <div class="page">
-    <div class="header-bar">
+    <!-- 蓝色渐变头部(滚动收缩,仿任务列表) -->
+    <div class="header-bar" :class="{ shrink: headerShrink }">
+      <div class="header-bg"></div>
       <div class="header-title">分类设置</div>
     </div>
 
     <div class="content">
-      <!-- 新增分类 -->
+      <!-- 分类管理(新增 + 已有,整合到一个卡片,仿成员职务) -->
       <div class="card">
-        <div class="card-title">新增分类</div>
-        <input v-model="newName" class="text-input" placeholder="输入分类名称" @keyup.enter="handleAdd" />
-        <div class="color-row">
-          <div v-for="c in colors" :key="c" class="color-dot"
-            :class="{ active: newColor === c }"
-            :style="{ background: c }"
-            @click="newColor = c" />
+        <div class="card-header" @click="tagsOpen = !tagsOpen">
+          <div class="card-title" style="margin-bottom:0;">分类管理（{{ tags.length }}个）</div>
+          <span class="fold-arrow" :class="{ folded: !tagsOpen }">▼</span>
         </div>
-        <button class="btn-primary" @click="handleAdd" :disabled="adding">
-          {{ adding ? '添加中...' : '添加' }}
-        </button>
+        <div v-if="tagsOpen">
+          <!-- 新增分类:作为列表第一项,与已有分类统一 -->
+          <div class="tag-row add-tag-row">
+            <div class="add-inner">
+              <div class="add-line">
+                <input v-model="newName" class="text-input add-input" placeholder="输入分类名称" @keyup.enter="handleAdd" />
+                <button class="btn-add" @click="handleAdd" :disabled="adding">
+                  {{ adding ? '...' : '添加' }}
+                </button>
+              </div>
+              <div class="color-row add-colors">
+                <div v-for="c in colors" :key="c" class="color-dot"
+                  :class="{ active: newColor === c }"
+                  :style="{ background: c }"
+                  @click="newColor = c" />
+              </div>
+            </div>
+          </div>
+
+          <!-- 已有分类列表(无缝衔接) -->
+          <div v-if="loading" class="empty-text">加载中...</div>
+          <div v-if="!loading && tags.length === 0" class="empty-text">暂无分类,在上方添加</div>
+          <div v-for="t in tags" :key="t.id" class="tag-row">
+            <div class="tag-info">
+              <span class="tag-badge" :style="{ borderColor: t.color || '#4472C4', color: t.color || '#4472C4' }">{{ t.name }}</span>
+              <span class="tag-count">{{ t.task_count || 0 }}个任务</span>
+            </div>
+            <div class="tag-actions">
+              <button class="btn-edit" @click="startEdit(t)">编辑</button>
+              <button class="btn-delete" @click="handleDelete(t)">删除</button>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <!-- 已有分类 -->
-      <div class="card">
-        <div class="card-title">已有分类（{{ tags.length }}个）</div>
-        <div v-if="loading" class="empty-text">加载中...</div>
-        <div v-if="!loading && tags.length === 0" class="empty-text">暂无分类</div>
-
-        <div v-for="t in tags" :key="t.id" class="tag-row">
-          <div class="tag-info">
-            <span class="tag-badge" :style="{ borderColor: t.color || '#4472C4', color: t.color || '#4472C4' }">{{ t.name }}</span>
-            <span class="tag-count">{{ t.task_count || 0 }}个任务</span>
-          </div>
-          <div class="tag-actions">
-            <button class="btn-edit" @click="startEdit(t)">编辑</button>
-            <button class="btn-delete" @click="handleDelete(t)">删除</button>
+      <!-- 成员职务（仅管理员，可折叠） -->
+      <div v-if="isAdmin" class="card">
+        <div class="card-header" @click="dutyOpen = !dutyOpen">
+          <div class="card-title" style="margin-bottom:0;">成员职务（{{ users.length }}人）</div>
+          <span class="fold-arrow" :class="{ folded: !dutyOpen }">▼</span>
+        </div>
+        <div v-if="dutyOpen">
+          <div class="hint-text">指定谁是部门主任、谁是值长。建任务时选好分类会自动带出对应负责人。</div>
+          <input v-model="userSearch" class="text-input" placeholder="搜索成员姓名" style="margin-bottom:10px;" />
+          <div v-if="usersLoading" class="empty-text">加载中...</div>
+          <div v-if="!usersLoading && filteredUsers.length === 0" class="empty-text">无匹配成员</div>
+          <div v-for="u in filteredUsers" :key="u.id" class="tag-row">
+            <div class="tag-info">
+              <span class="user-name">{{ u.name }}</span>
+              <span v-if="u.is_admin" class="admin-badge">管理员</span>
+            </div>
+            <div class="duty-actions">
+              <label class="switch sm">
+                <input type="checkbox" :checked="u.is_admin === true" @change="handleAdminChange(u, $event.target.checked)" />
+                <span class="slider"></span>
+              </label>
+              <select class="duty-select" :value="u.duty || 'member'"
+                @change="handleDutyChange(u, $event.target.value)">
+                <option v-for="(label, key) in DUTY_LABEL" :key="key" :value="key">{{ label }}</option>
+              </select>
+            </div>
           </div>
         </div>
+      </div>
+
+      <!-- 每日提醒（管理员 + 部门主任） -->
+      <div v-if="digest.allowed" class="card">
+        <div class="card-title">每日提醒</div>
+        <div class="hint-text">每天到点给你发一条钉钉消息，列出未完成的工作、剩余天数、负责人和审核人。</div>
+
+        <div class="switch-row">
+          <span>接收每日提醒</span>
+          <label class="switch">
+            <input type="checkbox" v-model="digest.enabled" />
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <template v-if="digest.enabled">
+          <div class="field-label">关注哪些分类</div>
+          <div class="chip-row">
+            <div v-for="t in digestTypes" :key="t.key" class="chip"
+              :class="{ active: digest.types.includes(t.key) }"
+              @click="toggleDigestType(t.key)">{{ t.label }}</div>
+          </div>
+
+          <div class="field-label">每天什么时候发</div>
+          <select class="duty-select full" v-model.number="digest.hour">
+            <option v-for="h in hourOptions" :key="h" :value="h">{{ String(h).padStart(2, '0') }}:00</option>
+          </select>
+        </template>
+
+        <button class="btn-primary digest-save" @click="handleSaveDigest" :disabled="savingDigest">
+          {{ savingDigest ? '保存中...' : '保存提醒设置' }}
+        </button>
       </div>
     </div>
 
@@ -80,12 +152,26 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
-import { fetchTags, createTag, updateTag, deleteTag } from '../api/task'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import {
+  fetchTags, createTag, updateTag, deleteTag,
+  fetchUsers, updateUserDuty, updateUserAdmin, DUTY_LABEL,
+  fetchDigestSettings, saveDigestSettings
+} from '../api/task'
+import { userStore, loadUser } from '../stores/user'
+
+// 头部滚动收缩
+const headerShrink = ref(false)
+function onScroll() {
+  const y = window.scrollY
+  if (headerShrink.value) { if (y < 20) headerShrink.value = false }
+  else { if (y > 50) headerShrink.value = true }
+}
 
 const tags = ref([])
 const loading = ref(true)
 const adding = ref(false)
+const tagsOpen = ref(true)          // 分类管理默认展开
 
 const newName = ref('')
 const newColor = ref('#4472C4')
@@ -105,6 +191,98 @@ function showToast(msg) {
   toast.msg = msg
   toast.show = true
   setTimeout(() => { toast.show = false }, 2000)
+}
+
+// ============================================================
+// 成员职务(仅管理员可改)
+// ============================================================
+const users = ref([])
+const usersLoading = ref(true)
+const isAdmin = computed(() => userStore.profile?.is_admin === true)
+const dutyOpen = ref(false)          // 成员职务板块默认折叠(人多)
+const userSearch = ref('')
+const filteredUsers = computed(() => {
+  const q = userSearch.value.trim().toLowerCase()
+  if (!q) return users.value
+  return users.value.filter(u => (u.name || '').toLowerCase().includes(q))
+})
+
+async function loadUsers() {
+  usersLoading.value = true
+  try {
+    users.value = await fetchUsers()
+  } catch (e) {
+    // 忽略:可能还没有权限或网络异常
+  } finally {
+    usersLoading.value = false
+  }
+}
+
+async function handleDutyChange(u, duty) {
+  const old = u.duty
+  u.duty = duty
+  try {
+    await updateUserDuty(u.id, duty)
+    showToast(`已将「${u.name}」设为${DUTY_LABEL[duty] || duty}`)
+  } catch (e) {
+    u.duty = old
+    showToast(e.message || '设置失败')
+  }
+}
+
+async function handleAdminChange(u, isAdmin) {
+  const old = u.is_admin
+  u.is_admin = isAdmin
+  try {
+    await updateUserAdmin(u.id, isAdmin)
+    showToast(isAdmin ? `已将「${u.name}」设为管理员` : `已取消「${u.name}」的管理员权限`)
+  } catch (e) {
+    u.is_admin = old
+    showToast(e.message || '设置失败')
+  }
+}
+
+// ============================================================
+// 每日提醒(管理员 + 部门主任)
+// ============================================================
+const digest = reactive({ allowed: false, enabled: false, types: [], hour: 8 })
+const digestTypes = [
+  { key: 'department', label: '部门任务' },
+  { key: 'team_a', label: '运行一值' },
+  { key: 'team_b', label: '运行二值' }
+]
+const hourOptions = Array.from({ length: 24 }, (_, i) => i)
+const savingDigest = ref(false)
+
+async function loadDigest() {
+  try {
+    const r = await fetchDigestSettings()
+    digest.allowed = r.allowed === true
+    digest.enabled = r.setting?.enabled === true
+    digest.types = Array.isArray(r.setting?.types) ? r.setting.types : []
+    digest.hour = Number.isInteger(r.setting?.hour) ? r.setting.hour : 8
+  } catch (e) {
+    digest.allowed = false
+  }
+}
+
+function toggleDigestType(key) {
+  const i = digest.types.indexOf(key)
+  if (i >= 0) digest.types.splice(i, 1)
+  else digest.types.push(key)
+}
+
+async function handleSaveDigest() {
+  if (digest.enabled && digest.types.length === 0) return showToast('请至少选择一个分类')
+  savingDigest.value = true
+  try {
+    await saveDigestSettings({ enabled: digest.enabled, types: digest.types, hour: digest.hour })
+    showToast(digest.enabled ? `已保存，每天 ${String(digest.hour).padStart(2, '0')}:00 发送` : '已关闭每日提醒')
+  } catch (e) {
+    showToast(e.message || '保存失败')
+  } finally {
+    savingDigest.value = false
+  }
 }
 
 async function load() {
@@ -169,20 +347,52 @@ async function doDelete() {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  window.addEventListener('scroll', onScroll, { passive: true })
+  // 直接进设置页时 store 里可能还没 profile,先补一次(要用来判断是否管理员)
+  if (!userStore.profile) {
+    try { await loadUser() } catch (e) {}
+  }
+  load()
+  loadDigest()
+  if (isAdmin.value) loadUsers()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('scroll', onScroll)
+})
 </script>
 
 <style scoped>
 .page { min-height: 100vh; background: #f7f8fa; padding-bottom: calc(90px + env(safe-area-inset-bottom)); }
 
-/* 蓝色渐变头部 */
+/* 蓝色渐变头部(滚动收缩,仿任务列表) */
 .header-bar {
-  background: linear-gradient(135deg, #4472C4, #5b8def);
-  padding: 48px 16px 16px;
-  display: flex; align-items: center; gap: 12px;
   position: sticky; top: 0; z-index: 100;
+  height: 110px; box-sizing: border-box;
+  padding: 48px 16px 16px;
+  overflow: hidden;
+  background: transparent;
+  transition: padding 0.28s ease;
 }
-.header-title { color: #fff; font-size: 18px; font-weight: 600; }
+.header-bar.shrink { padding: 14px 16px; }
+.header-bg {
+  position: absolute; left: 0; right: 0; top: 0;
+  height: 110px;
+  background: linear-gradient(135deg, #4472C4, #5b8def);
+  transition: height 0.28s ease, background 0.28s ease;
+  z-index: -1;
+}
+.header-bar.shrink .header-bg {
+  height: 50px;
+  background: #4472C4;
+}
+.header-title {
+  color: #fff; font-size: 18px; font-weight: 600;
+  text-align: center; width: 100%;
+  transition: font-size 0.28s;
+}
+.header-bar.shrink .header-title { font-size: 16px; }
 
 .content { padding: 12px; }
 
@@ -194,12 +404,54 @@ onMounted(load)
 }
 .card-title { font-size: 14px; font-weight: 600; color: #323233; margin-bottom: 12px; }
 
+/* 可折叠卡片头部 */
+.card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  cursor: pointer; user-select: none;
+}
+.fold-arrow {
+  font-size: 12px; color: #969799;
+  transition: transform 0.25s;
+}
+.fold-arrow.folded { transform: rotate(-90deg); }
+
 .text-input {
   width: 100%; border: 1px solid #ebedf0; border-radius: 8px;
   padding: 10px 12px; font-size: 15px; outline: none;
   box-sizing: border-box; margin-bottom: 12px;
 }
 .text-input:focus { border-color: #4472C4; }
+
+/* 新增分类行:作为列表第一项,与已有分类统一为一行 */
+.add-tag-row {
+  display: block;
+  padding: 12px 0;
+  border-bottom: 1px solid #f5f5f5;
+}
+.add-tag-row:last-child { border-bottom: none; }
+.add-inner { width: 100%; }
+.add-line {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 10px;
+}
+.add-input {
+  flex: 1; min-width: 0; margin-bottom: 0; padding: 8px 12px; font-size: 14px;
+}
+.btn-add {
+  flex: none; padding: 8px 16px; border: none; border-radius: 8px;
+  background: #4472C4; color: #fff; font-size: 14px; cursor: pointer;
+  white-space: nowrap;
+}
+.btn-add:active { opacity: 0.85; }
+.btn-add:disabled { opacity: 0.5; }
+
+.add-colors {
+  margin-bottom: 0; gap: 6px;
+}
+.add-colors .color-dot {
+  width: 22px; height: 22px;
+  border-width: 2px;
+}
 
 /* 颜色选择 */
 .color-row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -247,6 +499,57 @@ onMounted(load)
 .btn-delete:active { background: #fff1f0; }
 
 .empty-text { text-align: center; padding: 20px; color: #969799; font-size: 14px; }
+
+/* 说明文字 / 字段标题 */
+.hint-text { font-size: 12px; color: #969799; line-height: 1.6; margin: -4px 0 12px; }
+.field-label { font-size: 13px; color: #646566; margin: 14px 0 8px; }
+.user-name { font-size: 14px; color: #323233; }
+.admin-badge {
+  font-size: 11px; color: #fff; background: #ee0a24;
+  padding: 1px 6px; border-radius: 4px; margin-left: 6px;
+}
+.duty-actions { display: flex; align-items: center; gap: 10px; }
+
+/* 职务下拉 */
+.duty-select {
+  border: 1px solid #ebedf0; border-radius: 8px; padding: 6px 10px;
+  font-size: 13px; color: #323233; background: #fff; outline: none;
+  flex: none;
+}
+.duty-select.full { width: 100%; box-sizing: border-box; padding: 10px 12px; font-size: 15px; margin-left: 0; }
+
+/* 开关 */
+.switch-row {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 15px; color: #323233; padding: 4px 0;
+}
+.switch { position: relative; display: inline-block; width: 48px; height: 28px; flex: none; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider {
+  position: absolute; inset: 0; background: #dcdfe6; border-radius: 14px;
+  transition: background 0.2s; cursor: pointer;
+}
+.slider::before {
+  content: ''; position: absolute; width: 24px; height: 24px; left: 2px; top: 2px;
+  background: #fff; border-radius: 50%; transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.switch input:checked + .slider { background: #4472C4; }
+.switch input:checked + .slider::before { transform: translateX(20px); }
+.switch.sm { width: 40px; height: 22px; }
+.switch.sm .slider::before { width: 18px; height: 18px; }
+.switch.sm input:checked + .slider::before { transform: translateX(16px); }
+
+/* 分类胶囊 */
+.chip-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.chip {
+  padding: 6px 14px; border-radius: 20px; font-size: 13px;
+  border: 1px solid #ebedf0; background: #f7f8fa; color: #646566; cursor: pointer;
+  transition: all 0.15s;
+}
+.chip.active { background: #4472C4; border-color: #4472C4; color: #fff; }
+
+.digest-save { margin-top: 16px; }
 
 /* 底部弹窗 */
 .popup-overlay {

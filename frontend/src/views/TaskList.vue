@@ -1,63 +1,93 @@
 <template>
-  <div class="page">
-    <!-- 蓝色渐变头部 -->
-    <div class="header-bar">
-      <div class="header-top-row">
-        <div class="header-title">任务管理</div>
-        <span v-if="selectMode" class="header-cancel" @click="exitSelectMode">取消</span>
-      </div>
+  <div class="page"
+    @touchstart.passive="onPageTouchStart"
+    @touchmove.passive="onPageTouchMove"
+    @touchend="onPageTouchEnd">
+    <!-- 蓝色渐变头部(外层高度固定,内部蓝条单独动画,避免滚动时整页重排抖动) -->
+    <div class="header-bar" :class="{ shrink: headerShrink }">
+      <div class="header-bg"></div>
 
-      <!-- 统计卡片 -->
+      <!-- 统计卡片:同时作为筛选入口(点一下即筛选) -->
       <div class="stat-row">
-        <div class="stat-card">
-          <div class="stat-num">{{ counts.all || 0 }}</div>
-          <div class="stat-label">全部</div>
+        <div class="stat-card" :class="{ active: isPresetActive('active') }" @click="applyPreset('active')">
+          <div class="stat-num">{{ counts.incomplete || 0 }}</div>
+          <div class="stat-label">进行中</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" :class="{ active: isPresetActive('todo') }" @click="applyPreset('todo')">
           <div class="stat-num">{{ counts.todo || 0 }}</div>
           <div class="stat-label">待办</div>
         </div>
-        <div class="stat-card">
-          <div class="stat-num">{{ counts.in_progress || 0 }}</div>
-          <div class="stat-label">进行中</div>
+        <div class="stat-card" :class="{ active: isPresetActive('pending_review') }" @click="applyPreset('pending_review')">
+          <div class="stat-num">{{ counts.pending_review || 0 }}</div>
+          <div class="stat-label">待审核</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" :class="{ active: isPresetActive('done') }" @click="applyPreset('done')">
           <div class="stat-num">{{ counts.done || 0 }}</div>
           <div class="stat-label">已完成</div>
         </div>
+        <div class="stat-card" :class="{ active: isPresetActive('all') }" @click="applyPreset('all')">
+          <div class="stat-num">{{ counts.all || 0 }}</div>
+          <div class="stat-label">全部</div>
+        </div>
+      </div>
+
+      <!-- 搜索框 + 已选筛选条件(收缩状态显示在一行) -->
+      <div class="search-row">
+        <input v-model="keyword" class="search-input" placeholder="搜索任务标题/描述" @keyup.enter="load" />
+        <div class="filter-chips">
+          <span v-for="chip in activeChips" :key="chip" class="chip">{{ chip }}</span>
+        </div>
       </div>
     </div>
 
-    <!-- 状态标签 -->
-    <div class="tab-row">
-      <div v-for="(label, key) in tabs" :key="key"
-        class="tab-item" :class="{ active: active === key }"
-        @click="active = key; load()">
-        {{ label }}<span class="tab-count">{{ counts[key] || 0 }}</span>
+    <!-- 分类标签(部门任务 / 运行一值 / 运行二值) -->
+    <div class="tab-row type-tab-row">
+      <div v-for="(label, key) in typeTabs" :key="key"
+        class="tab-item" :class="{ active: activeType === key }"
+        @click="toggleType(key)">
+        {{ label }}
       </div>
     </div>
 
-    <!-- 排序 / 分组 -->
-    <div class="sort-row">
-      <div v-for="s in sortOptions" :key="s.key"
-        class="sort-item" :class="{ active: sortBy === s.key }"
-        @click="sortBy = s.key">
-        {{ s.label }}
+    <!-- 筛选入口:展开后是 周期 / 排序 / 标签 -->
+    <div class="filter-row">
+      <div class="filter-toggle" :class="{ on: filterOpen }" @click="filterOpen = !filterOpen">
+        筛选<span class="filter-arrow">{{ filterOpen ? '▴' : '▾' }}</span>
+      </div>
+      <div class="filter-summary">
+        <span v-for="(c, i) in panelChips" :key="i" class="summary-chip">{{ c }}</span>
       </div>
     </div>
 
-    <!-- 搜索 -->
-    <div class="search-row">
-      <input v-model="keyword" class="search-input" placeholder="搜索任务标题/描述" @keyup.enter="load" />
-    </div>
-
-    <!-- 标签筛选 -->
-    <div v-if="allTags.length" class="tag-filter-row">
-      <div v-for="t in allTags" :key="t.id"
-        class="tag-filter" :class="{ active: activeTag === t.id }"
-        :style="activeTag === t.id ? { background: t.color || '#4472C4', borderColor: t.color || '#4472C4' } : { color: t.color || '#4472C4', borderColor: t.color || '#4472C4' }"
-        @click="toggleTag(t.id)">
-        {{ t.name }}({{ tagCounts[t.id] || 0 }})
+    <div v-if="filterOpen" class="filter-panel">
+      <div class="panel-group">
+        <div class="panel-label">周期</div>
+        <div class="panel-chips">
+          <div v-for="(label, key) in priorityTabs" :key="key"
+            class="chip" :class="{ active: activePriority === key }"
+            @click="togglePriority(key)">{{ label }}</div>
+        </div>
+      </div>
+      <div class="panel-group">
+        <div class="panel-label">排序</div>
+        <div class="panel-chips">
+          <div v-for="s in sortOptions" :key="s.key"
+            class="chip" :class="{ active: sortBy === s.key }"
+            @click="onSort(s.key)">
+            {{ s.label }}<span v-if="sortBy === s.key" class="chip-arrow">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
+          </div>
+        </div>
+      </div>
+      <div v-if="allTags.length" class="panel-group">
+        <div class="panel-label">标签</div>
+        <div class="panel-chips">
+          <div v-for="t in allTags" :key="t.id"
+            class="chip" :class="{ active: activeTag === t.id }"
+            :style="activeTag === t.id ? { background: t.color || '#4472C4', borderColor: t.color || '#4472C4' } : { color: t.color || '#4472C4', borderColor: t.color || '#4472C4' }"
+            @click="toggleTag(t.id)">
+            {{ t.name }}<span class="chip-count">{{ tagCounts[t.id] || 0 }}</span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -67,8 +97,11 @@
     <!-- 任务列表 -->
     <div class="task-list">
       <div v-for="t in displayTasks" :key="t.id">
-        <div v-if="showHeaderBefore(t)" class="group-header">{{ groupKeyOf(t) }}<span class="group-count">{{ groupCountMap[groupKeyOf(t)] || 0 }}</span></div>
-        <div class="card-wrap">
+        <div v-if="showHeaderBefore(t)" class="group-header" @click="toggleGroup(groupKeyOf(t))">
+          <span class="fold-arrow" :class="{ folded: isGroupCollapsed(groupKeyOf(t)) }">▶</span>
+          {{ groupKeyOf(t) }}<span class="group-count">{{ groupCountMap[groupKeyOf(t)] || 0 }}</span>
+        </div>
+        <div class="card-wrap" v-if="!isGroupCollapsed(groupKeyOf(t))">
         <div class="swipe-actions" :style="{ width: revealW(t) + 'px' }">
           <button v-for="act in quickActions(t)" :key="act.to"
             class="swipe-btn" :style="{ background: act.color }"
@@ -124,7 +157,10 @@
       </div>
       <div v-if="!loading && tasks.length === 0" class="empty-state">
         <div class="empty-icon">📋</div>
-        <div class="empty-text">暂无任务</div>
+        <div class="empty-text">{{ viewMode === 'active' ? '暂无进行中的任务' : '暂无任务' }}</div>
+        <div v-if="viewMode === 'active' && counts.all > 0" class="empty-action" @click="setViewMode('all')">
+          已完成的任务在这里看 →
+        </div>
       </div>
       <div v-if="loading" class="loading-text">加载中...</div>
     </div>
@@ -167,7 +203,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   fetchTasks, fetchTaskCounts, fetchTags, deleteTask, quickCompleteTask, transitionTask,
@@ -179,18 +215,143 @@ const route = useRoute()
 const router = useRouter()
 
 const tabs = {
-  all: '全部',
   todo: '待办',
   in_progress: '进行中',
   pending_review: '待审核',
   done: '已完成'
 }
-const active = ref('all')
+const active = ref('all')   // 'all' 表示未筛选(不渲染"全部"按钮,再点已选中的按钮即回到未筛选)
+
+// 分类:部门任务 / 运行一值 / 运行二值
+const typeTabs = { department: '部门任务', team_a: '运行一值', team_b: '运行二值' }
+const activeType = ref('all')
+
+// 任务周期(日/周/月/季/年)
+const priorityTabs = { ...PRIORITY_LABEL }
+const activePriority = ref('all')
+
+// 视图模式:active=进行中(隐藏已完成/已关闭) / all=全部(含已完成)
+const viewMode = ref('active')
+
+// 筛选按钮:点一下选中,再点一下取消(回到未筛选)
+function toggleType(key) {
+  activeType.value = activeType.value === key ? 'all' : key
+  load()
+}
+// 顶部卡片 = 常用筛选预设(点一下即筛选,再点当前项=取消回到「进行中」)
+function applyPreset(key) {
+  if (key === 'active') { viewMode.value = 'active'; active.value = 'all' }
+  else if (key === 'all') { viewMode.value = 'all'; active.value = 'all' }
+  else if (key === 'todo') { viewMode.value = 'active'; active.value = active.value === 'todo' ? 'all' : 'todo' }
+  else if (key === 'pending_review') { viewMode.value = 'active'; active.value = active.value === 'pending_review' ? 'all' : 'pending_review' }
+  else if (key === 'done') { viewMode.value = 'all'; active.value = active.value === 'done' ? 'all' : 'done' }
+  load()
+}
+function isPresetActive(key) {
+  if (key === 'active') return viewMode.value === 'active' && active.value === 'all'
+  if (key === 'all') return viewMode.value === 'all' && active.value === 'all'
+  if (key === 'todo' || key === 'pending_review') return viewMode.value === 'active' && active.value === key
+  if (key === 'done') return viewMode.value === 'all' && active.value === 'done'
+  return false
+}
+function togglePriority(key) {
+  activePriority.value = activePriority.value === key ? 'all' : key
+  load()
+}
+function setViewMode(mode) {
+  viewMode.value = mode
+  if (mode === 'active' && active.value === 'done') active.value = 'all'
+  load()
+}
+
+// 页面空白处 / 卡片左右边缘 左右滑动 → 按顶部卡片顺序切换预设
+const PRESET_ORDER = ['active', 'todo', 'pending_review', 'done', 'all']
+const PRESET_NAME = { active: '进行中', todo: '待办', pending_review: '待审核', done: '已完成', all: '全部' }
+let pageStartX = 0
+let pageStartY = 0
+let pageSwiping = false
+let pageEligible = false
+
+// 判断这次触摸是否属于「边缘/空白」区域(可触发切换预设)
+function isPresetSwipeZone(e) {
+  if (selectMode.value) return false   // 批量选择模式下不切换
+  const el = e.target
+  if (!el || !el.closest) return false
+  // 头部、横向可滚动的行、筛选面板、弹窗、批量操作栏都不参与该手势
+  if (el.closest('.header-bar, .tab-row, .filter-row, .filter-panel, .popup-overlay, .batch-bar')) return false
+  const card = el.closest('.task-card')
+  if (!card) return true   // 页面空白处
+  const r = card.getBoundingClientRect()
+  const x = e.touches[0].clientX
+  return (x - r.left) < 22 || (r.right - x) < 22   // 卡片左右边缘
+}
+
+function onPageTouchStart(e) {
+  pageEligible = isPresetSwipeZone(e)
+  pageSwiping = false
+  if (!pageEligible) return
+  pageStartX = e.touches[0].clientX
+  pageStartY = e.touches[0].clientY
+}
+
+function onPageTouchMove(e) {
+  if (!pageEligible || pageSwiping) return
+  const dx = e.touches[0].clientX - pageStartX
+  const dy = e.touches[0].clientY - pageStartY
+  if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+    pageSwiping = true
+    switchPreset(dx < 0 ? 1 : -1)
+  }
+}
+
+function onPageTouchEnd() {
+  pageEligible = false
+  pageSwiping = false
+}
+
+// 当前预设(与顶部卡片的选中状态一致)
+function currentPresetKey() {
+  if (active.value === 'todo') return 'todo'
+  if (active.value === 'pending_review') return 'pending_review'
+  if (viewMode.value === 'all') return active.value === 'done' ? 'done' : 'all'
+  return 'active'
+}
+
+function switchPreset(step) {
+  const i = PRESET_ORDER.indexOf(currentPresetKey())
+  const next = PRESET_ORDER[(i + step + PRESET_ORDER.length) % PRESET_ORDER.length]
+  applyPreset(next)
+  showToast(PRESET_NAME[next])
+}
+
+// 筛选面板展开状态
+const filterOpen = ref(false)
+// 展开时:滚动页面 或 点其他位置,自动收起(不用再点一下「筛选」)
+function onFilterOutsideClick(e) {
+  if (!filterOpen.value) return
+  const el = e.target
+  if (el && el.closest && el.closest('.filter-row, .filter-panel')) return
+  filterOpen.value = false
+}
+function onFilterGesture() {
+  if (filterOpen.value) filterOpen.value = false
+}
+watch(filterOpen, (open) => {
+  if (open) {
+    document.addEventListener('click', onFilterOutsideClick)
+    window.addEventListener('touchmove', onFilterGesture, { passive: true })
+    window.addEventListener('wheel', onFilterGesture, { passive: true })
+  } else {
+    document.removeEventListener('click', onFilterOutsideClick)
+    window.removeEventListener('touchmove', onFilterGesture)
+    window.removeEventListener('wheel', onFilterGesture)
+  }
+})
 const tasks = ref([])
 const keyword = ref('')
 const loading = ref(false)
 const errorMsg = ref('')
-const counts = ref({ all: 0, todo: 0, in_progress: 0, pending_review: 0, done: 0 })
+const counts = ref({ all: 0, incomplete: 0, todo: 0, in_progress: 0, pending_review: 0, done: 0 })
 
 const allTags = ref([])
 const activeTag = ref(null)
@@ -199,26 +360,69 @@ const tagCounts = ref({})
 const todayStr = new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
 
 // 排序 / 分组
-const sortBy = ref('latest')   // latest 最新 / due 按截止日期 / assignee 按负责人
+const sortBy = ref('latest')   // latest 下发时间 / due 截止时间 / remaining 剩余时间 / assignee 姓名
+const sortDir = ref('desc')    // 当前排序方向 asc/desc
 const sortOptions = [
-  { key: 'latest', label: '最新' },
-  { key: 'due', label: '按截止日期' },
-  { key: 'assignee', label: '按负责人' }
+  { key: 'latest', label: '下发时间', defaultDir: 'desc' },
+  { key: 'due', label: '截止时间', defaultDir: 'asc' },
+  { key: 'remaining', label: '剩余时间', defaultDir: 'asc' },
+  { key: 'assignee', label: '姓名', defaultDir: 'asc' }
 ]
+// 点击排序:同一项切换正/倒序,不同项用该排序的默认方向
+function onSort(key) {
+  if (sortBy.value === key) {
+    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortBy.value = key
+    sortDir.value = sortOptions.find(s => s.key === key).defaultDir
+  }
+}
+
+// 面板内已生效的筛选摘要(周期 / 排序 / 标签)
+const panelChips = computed(() => {
+  const chips = []
+  if (activePriority.value !== 'all') chips.push(priorityTabs[activePriority.value])
+  const s = sortOptions.find(x => x.key === sortBy.value)
+  if (s) chips.push(s.label + (sortDir.value === 'asc' ? ' ↑' : ' ↓'))
+  if (activeTag.value) {
+    const t = allTags.value.find(x => x.id === activeTag.value)
+    if (t) chips.push(t.name)
+  }
+  return chips
+})
 
 const displayTasks = computed(() => {
   const list = [...tasks.value]
-  if (sortBy.value === 'due') {
+  const dir = sortDir.value === 'asc' ? 1 : -1
+  if (sortBy.value === 'due' || sortBy.value === 'remaining') {
     list.sort((a, b) => {
       const da = a.due_date || '9999-12-31'
       const db = b.due_date || '9999-12-31'
-      return da < db ? -1 : da > db ? 1 : 0
+      return (da < db ? -1 : da > db ? 1 : 0) * dir
     })
   } else if (sortBy.value === 'assignee') {
-    list.sort((a, b) => (a.assignee?.name || '未分配').localeCompare(b.assignee?.name || '未分配', 'zh'))
+    list.sort((a, b) =>
+      (a.assignee?.name || '未分配').localeCompare(b.assignee?.name || '未分配', 'zh') * dir
+    )
+  }
+  // latest: 保持后端返回顺序(按下发时间 created_at 倒序);切 asc 时前端反转
+  if (sortBy.value === 'latest' && sortDir.value === 'asc') {
+    list.reverse()
   }
   return list
 })
+
+// ===== 按姓名分组的折叠 =====
+const collapsedGroups = ref(new Set())
+function toggleGroup(key) {
+  const s = new Set(collapsedGroups.value)
+  if (s.has(key)) s.delete(key)
+  else s.add(key)
+  collapsedGroups.value = s
+}
+function isGroupCollapsed(key) {
+  return collapsedGroups.value.has(key)
+}
 
 function groupKeyOf(t) {
   return sortBy.value === 'assignee' ? (t.assignee?.name || '未分配') : ''
@@ -324,7 +528,21 @@ async function load() {
   errorMsg.value = ''
   swipeOpenId.value = null
   try {
-    let list = await fetchTasks({ status: active.value, keyword: keyword.value })
+    // 取回所有状态的任务,由前端按 分类/状态/标签 过滤
+    let list = await fetchTasks({ status: 'all', keyword: keyword.value })
+    // 1) 按分类过滤
+    if (activeType.value !== 'all') {
+      list = list.filter(t => t.task_type === activeType.value)
+    }
+    // 2) 基于分类过滤后的任务统计各状态数量(顶部统计卡)
+    // all = 全部分类任务(含已完成) / incomplete = 未完成任务合计
+    const c = { all: list.length, incomplete: 0, todo: 0, in_progress: 0, pending_review: 0, done: 0, closed: 0, rejected: 0 }
+    for (const t of list) {
+      if (c[t.status] !== undefined) c[t.status]++
+      if (t.status !== 'done' && t.status !== 'closed') c.incomplete++
+    }
+    counts.value = c
+    // 3) 标签计数
     const tc = {}
     for (const t of list) {
       if (t.tags) {
@@ -335,11 +553,23 @@ async function load() {
       }
     }
     tagCounts.value = tc
+    // 4) 视图模式:「进行中」视图隐藏已完成/已关闭任务
+    if (viewMode.value === 'active') {
+      list = list.filter(t => t.status !== 'done' && t.status !== 'closed')
+    }
+    // 5) 按状态过滤
+    if (active.value !== 'all') {
+      list = list.filter(t => t.status === active.value)
+    }
+    // 6) 按任务周期过滤(日/周/月/季/年)
+    if (activePriority.value !== 'all') {
+      list = list.filter(t => t.priority === activePriority.value)
+    }
+    // 7) 按标签过滤
     if (activeTag.value) {
       list = list.filter(t => t.tags?.some(tg => (tg.tag_id || tg.id) === activeTag.value))
     }
     tasks.value = list
-    loadCounts()
   } catch (e) {
     errorMsg.value = '加载失败：' + (e.message || '未知错误')
   } finally {
@@ -356,6 +586,7 @@ const dragging = ref(false)     // 是否已判定为横向拖动
 let startX = 0
 let startY = 0
 let suppressClick = false
+let edgeStart = false        // 本次触摸是否落在卡片左右边缘(边缘交给页面手势切换预设)
 
 // 当前用户在该任务上可执行的"下一步"操作
 function quickActions(t) {
@@ -378,7 +609,8 @@ function quickActions(t) {
   if (t.status === 'done' && t.task_type === 'department' && (t.department_head_id === me || admin)) {
     acts.push({ label: '关闭', to: 'closed', color: '#969799' })
   }
-  if (t.status === 'done' && t.task_type === 'team' && (t.creator_id === me || admin)) {
+  const isTeamType = t.task_type === 'team' || t.task_type === 'team_a' || t.task_type === 'team_b'
+  if (t.status === 'done' && isTeamType && (t.creator_id === me || admin)) {
     acts.push({ label: '关闭', to: 'closed', color: '#969799' })
   }
   return acts
@@ -401,6 +633,9 @@ function clearLongPress() {
 function onCardTouchStart(e, t) {
   if (selectMode.value) return
   const p = e.touches[0]
+  const r = e.currentTarget.getBoundingClientRect()
+  // 卡片左右边缘(含卡片内边距)的横向滑动不展开快捷按钮,交给页面手势切换预设
+  edgeStart = (p.clientX - r.left) < 22 || (r.right - p.clientX) < 22
   startX = p.clientX
   startY = p.clientY
   dragId.value = t.id
@@ -423,7 +658,16 @@ function onCardTouchMove(e, t) {
   const dy = p.clientY - startY
   if (!dragging.value) {
     if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) + 2) {
+      if (edgeStart) {
+        // 边缘横滑:本卡片不响应,让页面手势去切换预设
+        clearLongPress()
+        dragId.value = null
+        return
+      }
       dragging.value = true
+      clearLongPress()
+    } else if (Math.abs(dy) > 8) {
+      // 纵向滚动页面:取消长按,避免误触发批量选择
       clearLongPress()
     } else {
       return
@@ -568,7 +812,36 @@ async function doBatchDelete() {
   await load()
 }
 
+// 顶部头部滚动收起(滞回阈值,避免临界点闪烁)
+const headerShrink = ref(false)
+function onPageScroll() {
+  const y = window.scrollY
+  if (headerShrink.value) {
+    if (y < 20) headerShrink.value = false
+  } else {
+    if (y > 50) headerShrink.value = true
+  }
+}
+
+// 已选筛选条件标签(收缩状态下显示在搜索框旁)
+const activeChips = computed(() => {
+  const chips = []
+  if (viewMode.value === 'all') chips.push('全部任务')
+  if (activeType.value !== 'all') chips.push(typeTabs[activeType.value])
+  if (active.value !== 'all') chips.push(tabs[active.value])
+  if (activePriority.value !== 'all') chips.push(priorityTabs[activePriority.value])
+  const sort = sortOptions.find(s => s.key === sortBy.value)
+  if (sort) chips.push(sort.label)
+  if (activeTag.value) {
+    const t = allTags.value.find(x => x.id === activeTag.value)
+    if (t) chips.push(t.name)
+  }
+  if (keyword.value) chips.push(keyword.value)
+  return chips
+})
+
 onMounted(async () => {
+  window.addEventListener('scroll', onPageScroll, { passive: true })
   try {
     allTags.value = await fetchTags()
   } catch (e) {}
@@ -579,6 +852,21 @@ onMounted(async () => {
   await load()
 })
 
+onUnmounted(() => {
+  window.removeEventListener('scroll', onPageScroll)
+  document.removeEventListener('click', onFilterOutsideClick)
+  window.removeEventListener('touchmove', onFilterGesture)
+  window.removeEventListener('wheel', onFilterGesture)
+  clearTimeout(keywordTimer)
+})
+
+// 输入即搜(防抖 400ms):手机上软键盘敲回车不稳定,边打字边搜更顺手
+let keywordTimer = null
+watch(keyword, () => {
+  clearTimeout(keywordTimer)
+  keywordTimer = setTimeout(() => { load() }, 400)
+})
+
 watch(() => route.path, (newPath) => {
   if (newPath === '/tasks') load()
 })
@@ -587,27 +875,148 @@ watch(() => route.path, (newPath) => {
 <style scoped>
 .page { min-height: 100vh; background: #f7f8fa; padding-bottom: 140px; }
 
-/* 蓝色渐变头部 */
+/* 蓝色渐变头部
+   外层高度固定:滚动时只改变内部蓝条高度,不改变外层占位,
+   因此不会引起列表整体重排(sticky 抖动/闪烁的根因) */
 .header-bar {
-  background: linear-gradient(135deg, #4472C4, #5b8def);
+  position: sticky; top: 0; z-index: 100;
+  height: 162px; box-sizing: border-box;
   padding: 40px 16px 16px;
+  overflow: hidden;
+  background: transparent;
+  transition: padding 0.28s ease;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
-.header-top-row { position: relative; margin-bottom: 14px; height: 26px; }
-.header-title { position: absolute; left: 50%; transform: translateX(-50%); color: #fff; font-size: 18px; font-weight: 700; }
-.header-cancel { position: absolute; right: 0; top: 50%; transform: translateY(-50%); color: #fff; font-size: 14px; cursor: pointer; }
+.header-bar.shrink {
+  padding: 12px 16px 12px;
+  /* 收缩后只有顶部蓝条是不透明的,下面 100 多像素是透明的;
+     必须关掉指针事件,否则会挡住下方列表/筛选按钮的点击 */
+  pointer-events: none;
+}
+.header-bar.shrink .search-row {
+  pointer-events: auto;
+}
 
-/* 统计卡片 */
+/* 蓝条背景层:独立动画,只影响自身高度 */
+.header-bg {
+  position: absolute; left: 0; right: 0; top: 0;
+  height: 162px;
+  background: linear-gradient(135deg, #4472C4, #5b8def);
+  transition: height 0.28s ease, background 0.28s ease;
+  z-index: -1;
+}
+.header-bar.shrink .header-bg {
+  height: 56px;
+  background: #4472C4;
+}
+
+/* 统计卡片(收起时高度归零,用 max-height 过渡) */
 .stat-row {
+  position: relative;
   display: flex; gap: 6px;
+  overflow: hidden;
+  max-height: 120px;
+  opacity: 1;
+  margin-bottom: 10px;
+  transition: max-height 0.28s, opacity 0.28s, margin-bottom 0.28s;
+}
+.header-bar.shrink .stat-row {
+  max-height: 0;
+  opacity: 0;
+  margin-bottom: 0;
 }
 .stat-card {
-  flex: 1; background: rgba(255,255,255,0.15); border-radius: 8px;
-  padding: 8px 4px; text-align: center;
+  flex: 1; min-width: 0; background: rgba(255,255,255,0.15); border-radius: 8px;
+  padding: 8px 2px; text-align: center; cursor: pointer;
+  transition: background 0.2s;
 }
-.stat-num { font-size: 20px; font-weight: 700; color: #fff; }
-.stat-label { font-size: 11px; color: rgba(255,255,255,0.7); margin-top: 1px; }
+.stat-card.active { background: #fff; }
+.stat-card.active .stat-num { color: #4472C4; }
+.stat-card.active .stat-label { color: #4472C4; }
+.stat-num { font-size: 18px; line-height: 22px; font-weight: 700; color: #fff; }
+.stat-label { font-size: 10px; line-height: 13px; color: rgba(255,255,255,0.7); margin-top: 2px; white-space: nowrap; }
 
-/* 状态标签 */
+/* 搜索框 + 筛选标签 */
+.search-row {
+  position: relative;
+  display: flex; align-items: center; gap: 8px;
+  transition: gap 0.3s;
+}
+.search-input {
+  flex: 1; min-width: 0;
+  box-sizing: border-box; height: 36px; padding: 0 14px;
+  border: none; border-radius: 18px; background: #fff;
+  font-size: 14px; outline: none;
+  transition: flex 0.3s;
+}
+.header-bar.shrink .search-input {
+  flex: 0 0 45%;
+}
+.filter-chips {
+  display: none;
+  flex: 1; min-width: 0;
+  gap: 4px; overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.filter-chips::-webkit-scrollbar { display: none; }
+.header-bar.shrink .filter-chips { display: flex; }
+.chip {
+  flex-shrink: 0;
+  padding: 3px 10px; border-radius: 12px;
+  background: rgba(255,255,255,0.25);
+  color: #fff; font-size: 12px; white-space: nowrap;
+  max-width: 90px; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* 筛选入口行 */
+.filter-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 12px 8px;
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+}
+.filter-toggle {
+  flex: none; display: inline-flex; align-items: center; gap: 4px;
+  padding: 5px 14px; border-radius: 15px;
+  border: 1px solid #dcdfe6; background: #fff;
+  color: #646566; font-size: 13px; cursor: pointer;
+  transition: all 0.2s;
+}
+.filter-toggle.on {
+  background: #4472C4; border-color: #4472C4; color: #fff;
+}
+.filter-arrow { font-size: 10px; }
+.filter-summary { display: flex; gap: 6px; flex: none; }
+.summary-chip {
+  flex: none; padding: 4px 10px; border-radius: 12px;
+  background: #eef3fb; color: #4472C4; font-size: 12px; white-space: nowrap;
+}
+
+/* 展开的筛选面板 */
+.filter-panel {
+  margin: 0 12px 8px; padding: 10px 12px;
+  background: #f7f8fa; border-radius: 10px;
+}
+.panel-group + .panel-group { margin-top: 10px; }
+.panel-label {
+  font-size: 11px; color: #969799; margin-bottom: 6px;
+}
+.panel-chips {
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.chip {
+  padding: 5px 12px; border-radius: 14px;
+  border: 1px solid #dcdfe6; background: #fff;
+  color: #646566; font-size: 12px; cursor: pointer;
+  transition: all 0.2s;
+}
+.chip.active {
+  background: #4472C4; border-color: #4472C4; color: #fff;
+}
+.chip-arrow { margin-left: 2px; font-size: 10px; }
+.chip-count { margin-left: 3px; opacity: 0.65; }
+
+/* 分类标签 */
 .tab-row {
   display: flex; padding: 12px 12px 8px; gap: 6px;
   overflow-x: auto; -webkit-overflow-scrolling: touch;
@@ -622,46 +1031,6 @@ watch(() => route.path, (newPath) => {
 .tab-item.active {
   background: #4472C4; color: #fff; border-color: #4472C4;
 }
-.tab-count {
-  margin-left: 2px; font-size: 12px; opacity: 0.7;
-}
-.tab-item.active .tab-count { opacity: 0.9; }
-
-/* 排序 / 分组切换 */
-.sort-row {
-  display: flex; gap: 6px; padding: 0 12px 8px;
-  overflow-x: auto; -webkit-overflow-scrolling: touch;
-}
-.sort-row::-webkit-scrollbar { display: none; }
-.sort-item {
-  padding: 5px 14px; border-radius: 16px; font-size: 12px;
-  background: #fff; color: #646566; white-space: nowrap;
-  cursor: pointer; border: 1px solid #ebedf0; transition: all 0.2s;
-}
-.sort-item.active {
-  background: #e8f0fe; color: #4472C4; border-color: #4472C4; font-weight: 600;
-}
-
-/* 搜索 */
-.search-row { padding: 0 12px 8px; }
-.search-input {
-  width: 100%; box-sizing: border-box;
-  padding: 8px 14px; border: 1px solid #ebedf0; border-radius: 20px;
-  font-size: 14px; outline: none; background: #fff;
-}
-.search-input:focus { border-color: #4472C4; }
-
-/* 标签筛选 */
-.tag-filter-row {
-  display: flex; gap: 6px; padding: 0 12px 8px;
-  overflow-x: auto; -webkit-overflow-scrolling: touch;
-}
-.tag-filter-row::-webkit-scrollbar { display: none; }
-.tag-filter {
-  padding: 4px 12px; border-radius: 20px; font-size: 12px;
-  border: 1px solid; background: #fff; white-space: nowrap;
-  cursor: pointer; transition: all 0.2s;
-}
 
 /* 错误提示 */
 .error-banner {
@@ -674,7 +1043,7 @@ watch(() => route.path, (newPath) => {
 .card-wrap {
   position: relative; overflow: hidden; border-radius: 10px;
   margin-bottom: 8px; background: #fff;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  border: 1px solid #eef0f3;
 }
 .swipe-actions {
   position: absolute; top: 0; right: 0; bottom: 0;
@@ -747,6 +1116,16 @@ watch(() => route.path, (newPath) => {
 .group-header {
   display: flex; align-items: center; gap: 6px;
   padding: 10px 4px 6px; font-size: 13px; font-weight: 600; color: #4472C4;
+  cursor: pointer; user-select: none;
+}
+.fold-arrow {
+  display: inline-block;
+  font-size: 10px;
+  transition: transform 0.2s;
+  transform: rotate(90deg); /* 展开时箭头朝下 */
+}
+.fold-arrow.folded {
+  transform: rotate(0deg); /* 折叠时箭头朝右 */
 }
 .group-count {
   font-size: 11px; font-weight: 400; color: #fff;
@@ -782,6 +1161,11 @@ watch(() => route.path, (newPath) => {
 .empty-state { text-align: center; padding: 40px 0; }
 .empty-icon { font-size: 48px; }
 .empty-text { color: #969799; font-size: 14px; margin-top: 8px; }
+.empty-action {
+  display: inline-block; margin-top: 14px; padding: 7px 16px;
+  border: 1px solid #4472C4; border-radius: 18px;
+  color: #4472C4; font-size: 13px; cursor: pointer;
+}
 .loading-text { text-align: center; padding: 20px; color: #969799; font-size: 14px; }
 
 /* 浮动按钮 */
