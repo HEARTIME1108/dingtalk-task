@@ -22,6 +22,8 @@ function withTimeout(promise, ms, msg) {
 
 /**
  * 请求免登授权码 authCode（用 JSAPI）
+ * 清理缓存后钉钉 WebView 原生桥可能尚未完全就绪，直接调 requestAuthCode
+ * 可能拿到无效码（后端报 40078）。这里确保在 dd.ready 之后再取码，并支持一次重试。
  */
 export async function requestAuthCode(corpId) {
   if (!isInDingTalk()) {
@@ -29,35 +31,52 @@ export async function requestAuthCode(corpId) {
   }
   const dd = await import('dingtalk-jsapi')
 
-  // 先等 JSAPI 就绪，未就绪直接调用可能回调不触发
-  try {
-    await withTimeout(
-      new Promise((resolve) => { try { dd.ready(() => resolve(true)) } catch (e) { resolve(false) } }),
-      3000,
-      'ready_timeout'
-    )
-  } catch (e) {
-    // 就绪超时也继续尝试，交给下面 requestAuthCode 的超时兜底
+  const params = corpId ? { corpId } : {}
+
+  // 真正取码的逻辑，放在 dd.ready 回调里执行，保证原生桥就绪
+  function fetchCode() {
+    return new Promise((resolve, reject) => {
+      try {
+        dd.runtime.permission.requestAuthCode({
+          ...params,
+          onSuccess: (info) => {
+            const code = info.authCode || info.code || (typeof info === 'string' ? info : '')
+            if (!code) {
+              reject(new Error('requestAuthCode 返回空授权码'))
+            } else {
+              resolve(code)
+            }
+          },
+          onFail: (err) => {
+            const msg = typeof err === 'string' ? err
+              : (err && (err.message || err.errMsg || JSON.stringify(err)))
+            reject(new Error('requestAuthCode 失败: ' + msg))
+          }
+        })
+      } catch (e) {
+        reject(e)
+      }
+    })
   }
 
-  const params = corpId ? { corpId } : {}
-  const codePromise = new Promise((resolve, reject) => {
+  // 等 dd.ready 就绪(5s 兜底)，就绪后在回调里取码
+  const readyPromise = new Promise((resolve) => {
     try {
-      dd.runtime.permission.requestAuthCode({
-        ...params,
-        onSuccess: (info) => resolve(info.authCode || info.code || (typeof info === 'string' ? info : '')),
-        onFail: (err) => {
-          const msg = typeof err === 'string' ? err
-            : (err && (err.message || err.errMsg || JSON.stringify(err)))
-          reject(new Error('requestAuthCode 失败: ' + msg))
-        }
-      })
+      dd.ready(() => resolve('ready'))
     } catch (e) {
-      reject(e)
+      resolve('ready_error')
     }
   })
-  // 12 秒还没拿到授权码就报错，让登录页显示失败提示（而不是无限转圈）
-  return withTimeout(codePromise, 12000, '钉钉免登超时：未获取到授权码')
+
+  try {
+    await withTimeout(readyPromise, 5000, 'ready_timeout')
+  } catch (e) {
+    // 就绪超时也继续尝试取码（requestAuthCode 自身有超时兜底）
+  }
+
+  // 取码：12s 超时
+  const code = await withTimeout(fetchCode(), 12000, '钉钉免登超时：未获取到授权码')
+  return code
 }
 
 /**
