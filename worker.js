@@ -541,6 +541,35 @@ app.get('/api/debug/dingtalk', async (c) => {
   return c.json(result)
 })
 
+// 调试接口：用前端传来的真实 authCode 调 getuserinfo，返回完整响应（排查 40078）
+app.post('/api/debug/test-code', async (c) => {
+  const { authCode } = await c.req.json().catch(() => ({}))
+  const result = {
+    authCodeLen: authCode ? authCode.length : 0,
+    authCodePreview: authCode ? authCode.slice(0, 4) + '...' + authCode.slice(-4) : null,
+    corpId: env(c, 'DINGTALK_CORP_ID'),
+    appKey: env(c, 'DINGTALK_APP_KEY') ? env(c, 'DINGTALK_APP_KEY').slice(0, 8) + '***' : null,
+    tokenCacheExpire: tokenCache.expire,
+    tokenFromCache: !!(tokenCache.token && Date.now() < tokenCache.expire - 60000),
+    getuserinfoResp: null,
+    error: null
+  }
+  try {
+    if (!authCode) { result.error = 'no_authCode'; return c.json(result) }
+    const token = await getDingtalkAccessToken(c)
+    result.tokenFromCache = !!(tokenCache.token && token === tokenCache.token)
+    const res = await fetch(`https://oapi.dingtalk.com/topapi/v2/user/getuserinfo?access_token=${token}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: authCode })
+    })
+    result.getuserinfoResp = await res.json()
+  } catch (e) {
+    result.error = e.message
+  }
+  return c.json(result)
+})
+
 app.get('/api/auth/config', (c) => c.json({
   corpId: env(c, 'DINGTALK_CORP_ID'),
   appKey: env(c, 'DINGTALK_APP_KEY')
